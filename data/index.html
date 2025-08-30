@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>ESP32 Multiplus ESS</title>
+  <meta charset="utf-8">
+  <style>
+    body { font-family: Arial, sans-serif; font-size: 18px; margin: 20px; }
+    h1 { color: #333; }
+    h2 { color: #666; margin-top: 30px; }
+    table { border-collapse: collapse; width: 100%; margin: 10px 0; }
+    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+    th { background-color: #f2f2f2; }
+    .status { margin: 10px 0; }
+    .button { background-color: #4CAF50; color: white; padding: 10px 20px; margin: 5px; border: none; cursor: pointer; }
+    .button:hover { background-color: #45a049; }
+    i { font-style: italic; }
+  </style>
+  <script>
+    let ws;
+    
+    function connectWS() {
+      ws = new WebSocket('ws://' + location.hostname + '/ws');
+      ws.onmessage = function(event) {
+        const data = JSON.parse(event.data);
+        updateAllValues(data);
+      };
+      ws.onclose = function() {
+        setTimeout(connectWS, 2000);
+      };
+    }
+    
+    function updateAllValues(data) {
+      // Batterie
+      document.getElementById('battery_soc').textContent = data.battery_soc || '?';
+      document.getElementById('soc_threshold').textContent = data.socInverterOnOff || '?';
+      document.getElementById('battery_soh').textContent = data.battery_soh || '?';
+      document.getElementById('battery_charge_voltage').textContent = (data.battery_chargeVoltage || '?') + 'V';
+      document.getElementById('battery_charge_current_limit').textContent = (data.battery_chargeCurrentLimit || '?') + 'A';
+      document.getElementById('battery_discharge_current_limit').textContent = (data.battery_dischargeCurrentLimit || '?') + 'A';
+      document.getElementById('battery_discharge_voltage').textContent = (data.battery_dischargeVoltage || '?') + 'V';
+      document.getElementById('battery_voltage').textContent = (data.battery_voltage || '?') + 'V';
+      document.getElementById('battery_current').textContent = (data.battery_current || '?') + 'A';
+      document.getElementById('battery_temperature').textContent = (data.battery_temperature || '?') + '°C';
+      document.getElementById('battery_manufacturer').textContent = data.battery_manufacturer || '?';
+      document.getElementById('battery_packs').textContent = data.battery_nrPacksInParallel || '?';
+      document.getElementById('battery_protection1').textContent = '0x' + (data.battery_protectionFlags1 ? data.battery_protectionFlags1.toString(16) : '?');
+      document.getElementById('battery_protection2').textContent = '0x' + (data.battery_protectionFlags2 ? data.battery_protectionFlags2.toString(16) : '?');
+      document.getElementById('battery_warning1').textContent = '0x' + (data.battery_warningFlags1 ? data.battery_warningFlags1.toString(16) : '?');
+      document.getElementById('battery_warning2').textContent = '0x' + (data.battery_warningFlags2 ? data.battery_warningFlags2.toString(16) : '?');
+      document.getElementById('battery_request').textContent = '0x' + (data.battery_requestFlags ? data.battery_requestFlags.toString(16) : '?');
+      
+      // ESS Power
+      document.getElementById('ess_power').textContent = data.multiplusESSpower || '?';
+      
+      // Switch Mode
+      document.getElementById('switch_mode').textContent = data.switchMode || '?';
+      
+      // Strategy
+      document.getElementById('strategy').textContent = data.essPowerStrategy || '?';
+      
+      // Power Trends
+      document.getElementById('power_trend_cons').textContent = (data.powerTrendConsumption || '?') + 'Wh';
+      document.getElementById('power_trend_feed').textContent = (data.powerTrendFeedIn || '?') + 'Wh';
+      
+      // Strategy Times
+      document.getElementById('min_strategy_time').textContent = formatTime(data.secondsInMinStrategy || 0);
+      document.getElementById('max_strategy_time').textContent = formatTime(data.secondsInMaxStrategy || 0);
+      
+      // Shelly
+      document.getElementById('shelly_state').textContent = data.shellyState || '?';
+      document.getElementById('shelly_actuations').textContent = data.shellyActuations || '?';
+      document.getElementById('shelly_fails').textContent = data.shellyFails || '?';
+      document.getElementById('shelly_rules').textContent = data.nrShellysEnabledByRule || '?';
+      
+      // Power values
+      document.getElementById('minimum_feedin').textContent = (data.minimumFeedIn || '?') + 'W';
+      document.getElementById('avg_ctrl_deviation').textContent = (data.averageControlDeviationFeedIn || '?') + 'W';
+      document.getElementById('avg_charging_power').textContent = (data.averageChargingPower || '?') + 'W';
+      document.getElementById('avg_bms_power').textContent = Math.round(data.bmsPowerAverage || 0) + 'W';
+      
+      // Time
+      if (data.timeIsValid && data.electricMeter_Runtime) {
+        document.getElementById('current_time').textContent = formatTimeFromSeconds(data.electricMeter_Runtime);
+      } else {
+        document.getElementById('current_time').textContent = '- still unknown -';
+      }
+      
+      // Meter Power
+      const meterPower = data.electricMeter_Power || 0;
+      document.getElementById('meter_power').textContent = (meterPower >= 0 ? '+' : '') + meterPower + 'W';
+      
+      // Multiplus values
+      document.getElementById('multiplus_dc_voltage').textContent = (data.multiplusDcVoltage || '?') + 'V';
+      document.getElementById('multiplus_dc_current').textContent = (data.multiplusDcCurrent || '?') + 'A';
+      document.getElementById('multiplus_inverter_power').textContent = (data.multiplusPinverterFiltered || '?') + 'W';
+      document.getElementById('multiplus_acin_power').textContent = (data.multiplusPmainsFiltered || '?') + 'W';
+      document.getElementById('multiplus_ac_voltage').textContent = (data.multiplusUMainsRMS || '?') + 'V';
+      document.getElementById('multiplus_ac_frequency').textContent = (data.multiplusAcFrequency || '?') + 'Hz';
+      document.getElementById('multiplus_power_factor').textContent = data.multiplusPowerFactor || '?';
+      document.getElementById('multiplus_capacity').textContent = (data.multiplusBatteryAh || '?') + 'Ah';
+      document.getElementById('multiplus_temperature').textContent = (data.multiplusTemp || '?') + '°C';
+      document.getElementById('multiplus_status').textContent = data.multiplusStatus80 || '?';
+      document.getElementById('multiplus_voltage_status').textContent = '0x' + (data.multiplusVoltageStatus ? data.multiplusVoltageStatus.toString(16) : '?');
+      document.getElementById('multiplus_emergency_status').textContent = data.multiplusEmergencyPowerStatus || '?';
+      document.getElementById('multiplus_current_limit').textContent = (data.masterMultiLED_ActualInputCurrentLimit || '?') + 'A';
+      
+      // VE.Bus Communication Statistics
+      document.getElementById('vebus_online').textContent = data.veBus_isOnline ? 'Online' : 'Offline';
+      document.getElementById('vebus_quality').textContent = Math.round((data.veBus_communicationQuality || 0) * 100) + '%';
+      document.getElementById('vebus_frames_sent').textContent = data.veBus_framesSent || '0';
+      document.getElementById('vebus_frames_received').textContent = data.veBus_framesReceived || '0';
+      document.getElementById('vebus_errors').textContent = (data.veBus_checksumErrors || 0) + (data.veBus_timeoutErrors || 0);
+      
+      // Status LED Information
+      const ledModes = ['Boot', 'WiFi Connecting', 'WiFi Connected', 'Normal Operation', 'Error'];
+      const powerDirections = ['Idle', 'Charging', 'Discharging'];
+      document.getElementById('statusLED_mode').textContent = ledModes[data.statusLED_mode] || 'Unknown';
+      document.getElementById('statusLED_direction').textContent = powerDirections[data.statusLED_direction] || 'Unknown';
+      document.getElementById('battery_power_direction').textContent = data.battery_power_direction || 'unknown';
+      document.getElementById('statusLED_initialized').textContent = data.statusLED_initialized ? 'Yes' : 'No';
+      
+      // Electric meter
+      document.getElementById('meter_id').textContent = data.electricMeter_DeviceID || '?';
+      document.getElementById('meter_consumption').textContent = (data.electricMeter_Consumption || '?') + ' kWh';
+      document.getElementById('meter_feedin').textContent = (data.electricMeter_FeedIn || '?') + ' kWh';
+      document.getElementById('meter_runtime').textContent = (data.electricMeter_Runtime || '?') + ' sec';
+      document.getElementById('meter_power_l1').textContent = (data.electricMeter_PowerL1 || '?') + 'W';
+      document.getElementById('meter_power_l2').textContent = (data.electricMeter_PowerL2 || '?') + 'W';
+      document.getElementById('meter_power_l3').textContent = (data.electricMeter_PowerL3 || '?') + 'W';
+      document.getElementById('meter_crc_wrong').textContent = data.electricMeterCRCwrong || '?';
+      
+      // 24h totals
+      document.getElementById('meter_24h_consumption').textContent = Math.round((data.electricMeter24hConsumption || 0) * 1000) + 'Wh';
+      document.getElementById('meter_24h_feedin').textContent = Math.round((data.electricMeter24hFeedIn || 0) * 1000) + 'Wh';
+      
+      // Logfile counters
+      document.getElementById('logfile_all_counter').textContent = data.logfileAllCounter || '?';
+      document.getElementById('logfile_few_counter').textContent = data.logfileFewCounter || '?';
+    }
+    
+    function formatTime(seconds) {
+      const h = Math.floor(seconds / 3600);
+      const m = Math.floor((seconds % 3600) / 60);
+      const s = seconds % 60;
+      return h.toString().padStart(2, '0') + ':' + m.toString().padStart(2, '0') + ':' + s.toString().padStart(2, '0');
+    }
+    
+    function formatTimeFromSeconds(totalSeconds) {
+      const timeOffset = 9*60*60 + 57*60 + 7; // ELECTRIC_METER_TIME_OFFSET
+      const adjustedSeconds = totalSeconds + timeOffset;
+      const h = Math.floor((adjustedSeconds % (24*60*60)) / 3600);
+      const m = Math.floor((adjustedSeconds % 3600) / 60);
+      const s = adjustedSeconds % 60;
+      return h.toString().padStart(2, '0') + ':' + m.toString().padStart(2, '0') + ':' + s.toString().padStart(2, '0');
+    }
+    
+    function shortPress() {
+      fetch('/shortpress');
+    }
+    
+    function longPress() {
+      fetch('/longpress');
+    }
+    
+    window.onload = connectWS;
+  </script>
+</head>
+<body>
+  <h1>ESP32 Multiplus ESS</h1>
+  
+  <div class="status">
+    Battery: <span id="battery_soc">?</span>% (Th=<span id="soc_threshold">?</span>)<br>
+    Time: <span id="current_time">?</span><br>
+    PowerMeter: <span id="meter_power">?</span><br>
+    ESS power: <span id="ess_power">?</span>W<br>
+    ESP32 Switch-Mode: '<span id="switch_mode">?</span>'<br>
+    ESS power update strategy: <span id="strategy">?</span><br>
+    15min cons. power trend: <span id="power_trend_cons">?</span> (Th=10)<br>
+    15min feed-in power trend: <span id="power_trend_feed">?</span> (Th=10)<br>
+    ESS min strategy time: <span id="min_strategy_time">?</span><br>
+    ESS max strategy time: <span id="max_strategy_time">?</span><br>
+    Shelly state: <span id="shelly_state">?</span><br>
+    Shelly actuations: <span id="shelly_actuations">?</span><br>
+    Minimum feed-in: <span id="minimum_feedin">?</span><br>
+    Avg. ctrl deviation feed-in: <span id="avg_ctrl_deviation">?</span><br>
+    Avg. AC charging power: <span id="avg_charging_power">?</span><br>
+    Avg. BMS charging power: <span id="avg_bms_power">?</span><br>
+    Shellys enabled by consumer rules: <span id="shelly_rules">?</span><br>
+  </div>
+  
+  <button class="button" onclick="shortPress()">Short Press</button>
+  <button class="button" onclick="longPress()">Long Press</button>
+  
+  <h2>Multiplus</h2>
+  <table>
+    <tr><td>DC voltage:</td><td><span id="multiplus_dc_voltage">?</span></td></tr>
+    <tr><td>DC current:</td><td><span id="multiplus_dc_current">?</span></td></tr>
+    <tr><td>Charger/Inverter AC power:</td><td><span id="multiplus_inverter_power">?</span></td></tr>
+    <tr><td>ACin power:</td><td><span id="multiplus_acin_power">?</span></td></tr>
+    <tr><td>ACin voltage:</td><td><span id="multiplus_ac_voltage">?</span></td></tr>
+    <tr><td>AC frequency:</td><td><span id="multiplus_ac_frequency">?</span></td></tr>
+    <tr><td>Power factor:</td><td><span id="multiplus_power_factor">?</span></td></tr>
+    <tr><td>Capacity in-out:</td><td><span id="multiplus_capacity">?</span></td></tr>
+    <tr><td>Temperature:</td><td><span id="multiplus_temperature">?</span></td></tr>
+    <tr><td>Charger/Inverter Status:</td><td><span id="multiplus_status">?</span></td></tr>
+    <tr><td>Voltage status:</td><td><span id="multiplus_voltage_status">?</span></td></tr>
+    <tr><td>Emergency power status:</td><td><span id="multiplus_emergency_status">?</span></td></tr>
+    <tr><td>AC input current limit:</td><td><span id="multiplus_current_limit">?</span></td></tr>
+  </table>
+  
+  <h2>Electric meter (Info-DSS)</h2>
+  <table>
+    <tr><td>ID:</td><td><span id="meter_id">?</span></td></tr>
+    <tr><td>Consumption:</td><td><span id="meter_consumption">?</span></td></tr>
+    <tr><td>Feed-in:</td><td><span id="meter_feedin">?</span></td></tr>
+    <tr><td>Runtime:</td><td><span id="meter_runtime">?</span></td></tr>
+    <tr><td>Power L1:</td><td><span id="meter_power_l1">?</span></td></tr>
+    <tr><td>Power L2:</td><td><span id="meter_power_l2">?</span></td></tr>
+    <tr><td>Power L3:</td><td><span id="meter_power_l3">?</span></td></tr>
+    <tr><td>CRC failures:</td><td><span id="meter_crc_wrong">?</span></td></tr>
+  </table>
+  
+  <h2>Status LED</h2>
+  <table>
+    <tr><td>LED Mode:</td><td><span id="statusLED_mode">?</span></td></tr>
+    <tr><td>Power Direction:</td><td><span id="statusLED_direction">?</span></td></tr>
+    <tr><td>Power Flow:</td><td><span id="battery_power_direction">?</span></td></tr>
+    <tr><td>LED Initialized:</td><td><span id="statusLED_initialized">?</span></td></tr>
+  </table>
+  
+  <h2>VE.Bus Communication</h2>
+  <table>
+    <tr><td>Status:</td><td><span id="vebus_online">?</span></td></tr>
+    <tr><td>Communication quality:</td><td><span id="vebus_quality">?</span></td></tr>
+    <tr><td>Frames sent:</td><td><span id="vebus_frames_sent">?</span></td></tr>
+    <tr><td>Frames received:</td><td><span id="vebus_frames_received">?</span></td></tr>
+    <tr><td>Communication errors:</td><td><span id="vebus_errors">?</span></td></tr>
+  </table>
+  
+  <h2>BMS</h2>
+  <table>
+    <tr><td>State of charge:</td><td><span id="battery_soc">?</span>%</td></tr>
+    <tr><td>State of health:</td><td><span id="battery_soh">?</span>%</td></tr>
+    <tr><td>Charge voltage max:</td><td><span id="battery_charge_voltage">?</span></td></tr>
+    <tr><td>Charge current limit:</td><td><span id="battery_charge_current_limit">?</span></td></tr>
+    <tr><td>Discharge current limit:</td><td><span id="battery_discharge_current_limit">?</span></td></tr>
+    <tr><td>Discharge voltage min:</td><td><span id="battery_discharge_voltage">?</span></td></tr>
+    <tr><td>Voltage:</td><td><span id="battery_voltage">?</span></td></tr>
+    <tr><td>Current:</td><td><span id="battery_current">?</span></td></tr>
+    <tr><td>Temperature:</td><td><span id="battery_temperature">?</span></td></tr>
+    <tr><td>Manufacturer:</td><td><span id="battery_manufacturer">?</span></td></tr>
+    <tr><td>Nr of packs in parallel:</td><td><span id="battery_packs">?</span></td></tr>
+    <tr><td>Protection flags 1:</td><td><span id="battery_protection1">?</span></td></tr>
+    <tr><td>Protection flags 2:</td><td><span id="battery_protection2">?</span></td></tr>
+    <tr><td>Warning flags 1:</td><td><span id="battery_warning1">?</span></td></tr>
+    <tr><td>Warning flags 2:</td><td><span id="battery_warning2">?</span></td></tr>
+    <tr><td>Request flags:</td><td><span id="battery_request">?</span></td></tr>
+  </table>
+  
+  <div class="status">
+    Total last 24h: Consumption <span id="meter_24h_consumption">?</span>, Feed-in <span id="meter_24h_feedin">?</span><br><br>
+    <a href="/logfileAll.txt">logfileAll.txt of last actions</a><br>
+    <span id="logfile_all_counter">?</span> bytes written since last logfile view<br><br>
+    <a href="/logfileFew.txt">logfileFew.txt of last actions</a><br>
+    <span id="logfile_few_counter">?</span> bytes written since last logfile view<br>
+  </div>
+</body>
+</html>

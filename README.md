@@ -1,10 +1,35 @@
-# Victron Multiplus 2 ESS using ESP32 controlling VE.Bus
+# Victron Multiplus 2 ESS using LilyGO T-CAN485 controlling VE.Bus
 
 Implements an ESS system with Victron Multiplus II and Pylontech batteries.
-Instead by a Cerbo GX, the Multiplus is directly controlled by the ESP32 via
-the VE.Bus.
+The Multiplus is directly controlled via VE.Bus using the LilyGO T-CAN485 board,
+which features built-in CAN and RS485 transceivers.
 
 ![ESP32ESS hardware photo](docs/esp32ess_control_board.jpg)
+
+## Hardware Requirements
+
+- **LilyGO T-CAN485 Board** (ESP32-WROOM-32 based)
+  - Built-in CAN transceiver (SN65HVD230)
+  - Built-in RS485 transceiver (SP3485)
+  - WiFi & Bluetooth support
+  - USB programming
+  - GitHub: https://github.com/Xinyuan-LilyGO/T-CAN485
+
+## Pin Configuration (LilyGO T-CAN485)
+
+```
+CAN Bus (for Pylontech batteries):
+- CAN_TX: GPIO4
+- CAN_RX: GPIO5
+
+VE.Bus (RS485 for Victron communication):
+- RS485_TX: GPIO17
+- RS485_RX: GPIO16  
+- RS485_DE: GPIO21 (Direction Enable)
+
+Status LED:
+- WS2812 LED: GPIO4
+```
 
 ## Description
 
@@ -42,18 +67,82 @@ For software details read my documentation [here](docs/README.md#vebus).
 
 ### Dependencies
 
-Currently there are no additional dependencies. All used libraries are
-included in the Arduino IDE. The author was using Arduino IDE version 2.2.1 on
-Windows 10 to compile this code.
+This project uses PlatformIO for development. All required libraries are automatically 
+managed through PlatformIO's library dependency system.
+
+**Required:**
+- PlatformIO Core or PlatformIO IDE
+- LilyGO T-CAN485 board
+
+### Hardware Setup
+
+1. **LilyGO T-CAN485 Board**: No additional hardware required for CAN and RS485 communication
+2. **Pylontech Battery Connection**: Connect CAN+ and CAN- to the battery's CAN bus
+3. **Victron Multiplus Connection**: Connect RS485 A/B to VE.Bus terminals
+3. **Power Supply**: Use USB for programming and external 5V for operation
+
+### Software Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/mkrasselt1/victron-esp32-ess-homeassitant.git
+cd victron-esp32-ess-homeassitant
+
+# Install dependencies and build
+pio run
+
+# Upload firmware (first time via USB)
+pio run -t upload
+
+# Monitor serial output
+pio device monitor
+```
+
+### WiFi Configuration
+
+The device uses WiFiManager for easy WiFi setup:
+
+1. On first boot, the device creates a WiFi access point "VictronESS-Setup"
+2. Connect to this network with your phone/computer
+3. Open browser and navigate to 192.168.4.1
+4. Select your WiFi network and enter credentials
+5. Device will connect and remember the settings
+
+### Over-The-Air (OTA) Updates
+
+After initial setup, you can update firmware wirelessly:
+
+1. Find device IP address in serial monitor
+2. Edit `platformio.ini`:
+   ```ini
+   ; Uncomment and set your device's IP
+   upload_protocol = espota
+   upload_port = 192.168.1.100  ; Your device IP
+   ```
+3. Upload wirelessly:
+   ```bash
+   pio run -t upload
+   ```
 
 ### Installing
+### Configuration Steps
 
-* Build your hardware according to the [Hardware documentation](docs/README.md#hardware).
-* Update your Victron Multiplus II to latest firmare using an MK3 interface. (I am using v502 on my Multiplus II 48/5000).
-* Configure your Multiplus with ESS assistant and correct voltage thresholds etc. matching your battery.
-* Create Arduino project with _esp32ess.ino_ from _/src_ folder.
-* Add file _my_wifi_pw.h_ into your Arduino project directory and edit this file with your WiFi credentials.
-* Compile and upload this code onto your ESP32 hardware
+* Ensure your LilyGO T-CAN485 board is properly connected to Pylontech batteries (CAN bus) and Victron Multiplus (VE.Bus)
+* Update your Victron Multiplus II to latest firmware using an MK3 interface (tested with v502 on Multiplus II 48/5000)
+* Configure your Multiplus with ESS assistant and correct voltage thresholds matching your battery
+* Clone this repository and upload firmware using PlatformIO
+* Use WiFiManager for initial WiFi setup (access point "VictronESS-Setup")
+* Access web interface at device IP for monitoring and control
+
+## Features
+
+* **WiFiManager**: Automatic WiFi configuration with captive portal
+* **OTA Updates**: Both PlatformIO and web-based firmware updates
+* **CAN Bus**: Dedicated task for Pylontech battery communication
+* **VE.Bus**: Separate task for Victron Multiplus control
+* **Status LED**: WS2812 LED with power flow visualization
+* **Web API**: REST API for system monitoring and control
+* **Real-time Monitoring**: Live system status via web interface
 
 ## Authors
 
