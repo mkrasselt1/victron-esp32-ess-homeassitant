@@ -15,10 +15,14 @@
 #include <stdint.h>
 
 // VE.Bus Constants
-#define VEBUS_FRAME_SIZE 32
+#define VEBUS_FRAME_SIZE 128  // Increased for MK3 protocol with stuffing
 #define VEBUS_SYNC_BYTE 0xFF
 #define VEBUS_MAX_RETRY_COUNT 3
 #define VEBUS_TIMEOUT_MS 1000
+
+// MK3 Protocol Frame Structure
+#define VEBUS_MK3_HEADER_SIZE 4
+#define VEBUS_MK3_MAX_DATA_SIZE 120
 
 // VE.Bus Frame Types
 enum VeBusFrameType {
@@ -108,14 +112,18 @@ struct VeBusWarningInfo {
     uint8_t dcRippleWarning;
 };
 
-// Basic VE.Bus Frame Structure
+// Basic VE.Bus Frame Structure (MK2/MK3 compatible)
 struct VeBusFrame {
-    uint8_t sync;           // Always 0xFF
+    uint8_t sync;           // MK2: 0xFF, MK3: 0x98
     uint8_t address;        // Device address
     uint8_t command;        // Command/Frame type
     uint8_t length;         // Data length
-    uint8_t data[28];       // Data payload
+    uint8_t data[VEBUS_MK3_MAX_DATA_SIZE];  // Data payload (increased for MK3)
     uint8_t checksum;       // Frame checksum
+    
+    // MK3 specific fields
+    uint8_t frameNumber;    // Frame sequence number for MK3
+    bool isMk3Frame;        // Flag to indicate MK3 protocol
     
     VeBusFrame() {
         sync = VEBUS_SYNC_BYTE;
@@ -124,21 +132,62 @@ struct VeBusFrame {
         length = 0;
         memset(data, 0, sizeof(data));
         checksum = 0;
+        frameNumber = 0;
+        isMk3Frame = false;
     }
     
-    void calculateChecksum() {
+    // MK2 Checksum calculation
+    void calculateChecksumMk2() {
         checksum = 0x55 - sync - address - command - length;
-        for (int i = 0; i < length && i < 28; i++) {
+        for (int i = 0; i < length && i < VEBUS_MK3_MAX_DATA_SIZE; i++) {
             checksum -= data[i];
         }
     }
     
-    bool isChecksumValid() const {
+    // MK3 Checksum calculation (from reference implementation)
+    void calculateChecksumMk3() {
+        checksum = 1;  // Start with 1
+        for (int i = 2; i < length + 4; i++) {  // Skip first 2 bytes (address)
+            checksum -= data[i - 4];
+        }
+        if (checksum >= 0xFB) {  // Exception: replace from 0xFB
+            // This would require frame stuffing, simplified for now
+            checksum = (checksum - 0xFA) | 0x70;
+        }
+    }
+    
+    void calculateChecksum() {
+        if (isMk3Frame) {
+            calculateChecksumMk3();
+        } else {
+            calculateChecksumMk2();
+        }
+    }
+    
+    // MK2 Checksum validation
+    bool isChecksumValidMk2() const {
         uint8_t calc = 0x55 - sync - address - command - length;
-        for (int i = 0; i < length && i < 28; i++) {
+        for (int i = 0; i < length && i < VEBUS_MK3_MAX_DATA_SIZE; i++) {
             calc -= data[i];
         }
         return calc == checksum;
+    }
+    
+    // MK3 Checksum validation (simplified)
+    bool isChecksumValidMk3() const {
+        uint8_t cs = 0;
+        for (int i = 2; i < length + 4; i++) {
+            cs += data[i - 4];
+        }
+        return (cs == 0);
+    }
+    
+    bool isChecksumValid() const {
+        if (isMk3Frame) {
+            return isChecksumValidMk3();
+        } else {
+            return isChecksumValidMk2();
+        }
     }
 };
 

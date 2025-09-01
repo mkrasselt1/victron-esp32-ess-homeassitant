@@ -1,12 +1,45 @@
 let ws;
 let lastUpdateTime = 0;
 
+// Safe DOM element access helper
+function getElement(id) {
+    return document.getElementById(id);
+}
+
+// Safe element update helper
+function updateElement(id, value, suffix = '') {
+    const element = getElement(id);
+    if (element) {
+        element.textContent = value + suffix;
+    }
+}
+
+// Safe element style update helper
+function updateElementStyle(id, property, value) {
+    const element = getElement(id);
+    if (element) {
+        element.style[property] = value;
+    }
+}
+
+// Safe element class update helper
+function updateElementClass(id, className) {
+    const element = getElement(id);
+    if (element) {
+        element.className = className;
+    }
+}
+
 function connectWS() {
     ws = new WebSocket('ws://' + location.hostname + '/ws');
     ws.onmessage = function(event) {
-        const data = JSON.parse(event.data);
-        updateAllValues(data);
-        lastUpdateTime = Date.now();
+        try {
+            const data = JSON.parse(event.data);
+            updateData(data); // Neue spezifische Update-Funktion
+            lastUpdateTime = Date.now();
+        } catch (e) {
+            console.error('Error parsing WebSocket data:', e);
+        }
     };
     ws.onclose = function() {
         setTimeout(connectWS, 2000);
@@ -17,124 +50,282 @@ function connectWS() {
 }
 
 function updateAllValues(data) {
-    // Battery Status
-    const soc = data.battery_soc || 0;
-    document.getElementById('battery_soc').textContent = soc + '%';
-    document.getElementById('battery_voltage').textContent = (data.battery_voltage || '?') + ' V';
-    document.getElementById('battery_current').textContent = (data.battery_current || '?') + ' A';
-    document.getElementById('battery_temperature').textContent = (data.battery_temperature || '?') + ' °C';
-    document.getElementById('battery_soh').textContent = (data.battery_soh || '?') + '%';
-    document.getElementById('battery_charge_voltage').textContent = (data.battery_chargeVoltage || '?') + ' V';
-    document.getElementById('battery_charge_current_limit').textContent = (data.battery_chargeCurrentLimit || '?') + ' A';
-    document.getElementById('battery_discharge_current_limit').textContent = (data.battery_dischargeCurrentLimit || '?') + ' A';
-    document.getElementById('battery_manufacturer').textContent = data.battery_manufacturer || '---';
-    
-    // Update battery SOC progress bar
-    const progressBar = document.getElementById('battery-progress');
-    progressBar.style.width = Math.max(0, Math.min(100, soc)) + '%';
-    
-    // Change color based on SOC
-    if (soc > 70) {
-        progressBar.style.background = 'linear-gradient(90deg, var(--victron-green), #20C997)';
-    } else if (soc > 30) {
-        progressBar.style.background = 'linear-gradient(90deg, var(--victron-orange), #FFB347)';
-    } else {
-        progressBar.style.background = 'linear-gradient(90deg, var(--victron-red), #FF6B6B)';
+    if (!data) return;
+
+    // Battery Status - only update if data is available
+    if (typeof data.battery_soc !== 'undefined') {
+        const soc = data.battery_soc || 0;
+        updateElement('battery_soc', soc, '%');
+        updateElement('battery_voltage', (data.battery_voltage || '?'), ' V');
+        updateElement('battery_current', (data.battery_current || '?'), ' A');
+        updateElement('battery_temperature', (data.battery_temperature || '?'), ' °C');
+        updateElement('battery_soh', (data.battery_soh || '?'), '%');
+        updateElement('battery_charge_voltage', (data.battery_chargeVoltage || '?'), ' V');
+        updateElement('battery_charge_current_limit', (data.battery_chargeCurrentLimit || '?'), ' A');
+        updateElement('battery_discharge_current_limit', (data.battery_dischargeCurrentLimit || '?'), ' A');
+        updateElement('battery_manufacturer', data.battery_manufacturer || '---');
+
+        // Update battery SOC progress bar
+        const progressBar = getElement('battery-progress');
+        if (progressBar) {
+            progressBar.style.width = Math.max(0, Math.min(100, soc)) + '%';
+
+            // Change color based on SOC
+            if (soc > 70) {
+                progressBar.style.background = 'linear-gradient(90deg, var(--victron-green), #20C997)';
+            } else if (soc > 30) {
+                progressBar.style.background = 'linear-gradient(90deg, var(--victron-orange), #FFB347)';
+            } else {
+                progressBar.style.background = 'linear-gradient(90deg, var(--victron-red), #FF6B6B)';
+            }
+        }
     }
-    
-    // MultiPlus Data
-    document.getElementById('multiplus_dc_voltage').textContent = (data.multiplusDcVoltage || '?') + ' V';
-    document.getElementById('multiplus_dc_current').textContent = (data.multiplusDcCurrent || '?') + ' A';
-    document.getElementById('multiplus_ac_voltage').textContent = (data.multiplusUMainsRMS || '?') + ' V';
-    document.getElementById('multiplus_ac_frequency').textContent = (data.multiplusAcFrequency || '?') + ' Hz';
-    document.getElementById('multiplus_inverter_power').textContent = (data.multiplusPinverterFiltered || '?') + ' W';
-    document.getElementById('multiplus_acin_power').textContent = (data.multiplusPmainsFiltered || '?') + ' W';
-    document.getElementById('multiplus_power_factor').textContent = data.multiplusPowerFactor || '---';
-    document.getElementById('multiplus_temperature').textContent = (data.multiplusTemp || '?') + ' °C';
-    document.getElementById('multiplus_status').textContent = data.multiplusStatus80 || '---';
-    document.getElementById('multiplus_current_limit').textContent = (data.masterMultiLED_ActualInputCurrentLimit || '?') + ' A';
-    
-    // ESS Power Flow
-    const essPower = data.multiplusESSpower || 0;
-    document.getElementById('ess_power').textContent = Math.abs(essPower) + ' W';
-    const powerDirection = document.getElementById('power_direction');
-    if (essPower > 100) {
-        powerDirection.textContent = 'Charging';
-        document.getElementById('ess_power').style.color = 'var(--victron-green)';
-    } else if (essPower < -100) {
-        powerDirection.textContent = 'Discharging';
-        document.getElementById('ess_power').style.color = 'var(--victron-orange)';
-    } else {
-        powerDirection.textContent = 'Standby';
-        document.getElementById('ess_power').style.color = 'var(--victron-blue)';
+
+    // MultiPlus Data - only update if data is available
+    if (typeof data.multiplusDcVoltage !== 'undefined' ||
+        typeof data.multiplusDcCurrent !== 'undefined' ||
+        typeof data.multiplusUMainsRMS !== 'undefined') {
+
+        updateElement('multiplus_dc_voltage', (data.multiplusDcVoltage || '?'), ' V');
+        updateElement('multiplus_dc_current', (data.multiplusDcCurrent || '?'), ' A');
+        updateElement('multiplus_ac_voltage', (data.multiplusUMainsRMS || '?'), ' V');
+        updateElement('multiplus_ac_frequency', (data.multiplusAcFrequency || '?'), ' Hz');
+        updateElement('multiplus_inverter_power', (data.multiplusPinverterFiltered || '?'), ' W');
+        updateElement('multiplus_acin_power', (data.multiplusPmainsFiltered || '?'), ' W');
+        updateElement('multiplus_power_factor', data.multiplusPowerFactor || '---');
+        updateElement('multiplus_temperature', (data.multiplusTemp || '?'), ' °C');
+        updateElement('multiplus_status', data.multiplusStatus80 || '---');
+        updateElement('multiplus_current_limit', (data.masterMultiLED_ActualInputCurrentLimit || '?'), ' A');
     }
-    
-    document.getElementById('switch_mode').textContent = data.switchMode || '---';
-    document.getElementById('strategy').textContent = data.essPowerStrategy || '---';
-    document.getElementById('min_strategy_time').textContent = formatTime(data.secondsInMinStrategy || 0);
-    document.getElementById('max_strategy_time').textContent = formatTime(data.secondsInMaxStrategy || 0);
-    document.getElementById('avg_bms_power').textContent = Math.round(data.bmsPowerAverage || 0) + ' W';
-    
-    // System Status
+
+    // ESS Power Flow - only update if data is available
+    if (typeof data.multiplusESSpower !== 'undefined') {
+        const essPower = data.multiplusESSpower || 0;
+        updateElement('ess_power', Math.abs(essPower), ' W');
+
+        const powerDirection = getElement('power_direction');
+        const essPowerElement = getElement('ess_power');
+        if (powerDirection && essPowerElement) {
+            if (essPower > 100) {
+                powerDirection.textContent = 'Charging';
+                essPowerElement.style.color = 'var(--victron-green)';
+            } else if (essPower < -100) {
+                powerDirection.textContent = 'Discharging';
+                essPowerElement.style.color = 'var(--victron-orange)';
+            } else {
+                powerDirection.textContent = 'Standby';
+                essPowerElement.style.color = 'var(--victron-blue)';
+            }
+        }
+    }
+
+    // ESS Control data - only update if data is available
+    if (typeof data.switchMode !== 'undefined' ||
+        typeof data.essPowerStrategy !== 'undefined') {
+
+        updateElement('switch_mode', data.switchMode || '---');
+        updateElement('strategy', data.essPowerStrategy || '---');
+        updateElement('min_strategy_time', formatTime(data.secondsInMinStrategy || 0));
+        updateElement('max_strategy_time', formatTime(data.secondsInMaxStrategy || 0));
+        updateElement('avg_bms_power', Math.round(data.bmsPowerAverage || 0), ' W');
+    }
+
+    // System Status - always update time
     const currentTime = new Date();
-    document.getElementById('current_time').textContent = currentTime.toLocaleTimeString();
-    
-    // VE.Bus Status
-    const vebusIndicator = document.getElementById('vebus-indicator');
-    const vebusOnline = data.veBus_isOnline;
-    document.getElementById('vebus_online').textContent = vebusOnline ? 'Online' : 'Offline';
-    vebusIndicator.className = 'status-indicator ' + (vebusOnline ? 'status-online' : 'status-offline');
-    document.getElementById('vebus_quality').textContent = Math.round((data.veBus_communicationQuality || 0) * 100) + '%';
-    document.getElementById('vebus_frames_sent').textContent = data.veBus_framesSent || '0';
-    document.getElementById('vebus_frames_received').textContent = data.veBus_framesReceived || '0';
-    document.getElementById('vebus_errors').textContent = ((data.veBus_checksumErrors || 0) + (data.veBus_timeoutErrors || 0));
-    
-    // Status LED
-    const ledModes = ['Boot', 'WiFi Connecting', 'WiFi Connected', 'Normal Operation', 'Error'];
-    document.getElementById('statusLED_mode').textContent = ledModes[data.statusLED_mode] || 'Unknown';
-    
-    // Feed-in Power Control
-    const feedInEnabled = data.feedInControl_enabled || false;
-    document.getElementById('feedin_status').textContent = feedInEnabled ? 'Aktiv' : 'Inaktiv';
-    document.getElementById('feedin_status').style.color = feedInEnabled ? 'var(--victron-green)' : 'var(--victron-red)';
-    document.getElementById('feedin_current').textContent = Math.round(data.feedInControl_current || 0) + ' W';
-    document.getElementById('feedin_target').textContent = Math.round(data.feedInControl_target || 0) + ' W';
-    document.getElementById('feedin_max').textContent = Math.round(data.feedInControl_max || 0) + ' W';
-    
-    // Update form inputs if not currently being edited
-    if (!document.getElementById('feedin_enabled').matches(':focus')) {
-        document.getElementById('feedin_enabled').checked = feedInEnabled;
+    updateElement('current_time', currentTime.toLocaleTimeString());
+
+    // VE.Bus Status - only update if data is available
+    if (typeof data.veBus_isOnline !== 'undefined') {
+        const vebusIndicator = getElement('vebus-indicator');
+        const vebusOnline = data.veBus_isOnline;
+        updateElement('vebus_online', vebusOnline ? 'Online' : 'Offline');
+
+        if (vebusIndicator) {
+            vebusIndicator.className = 'status-indicator ' + (vebusOnline ? 'status-online' : 'status-offline');
+        }
+
+        updateElement('vebus_quality', Math.round((data.veBus_communicationQuality || 0) * 100), '%');
+        updateElement('vebus_frames_sent', data.veBus_framesSent || '0');
+        updateElement('vebus_frames_received', data.veBus_framesReceived || '0');
+        updateElement('vebus_errors', ((data.veBus_checksumErrors || 0) + (data.veBus_timeoutErrors || 0)));
     }
-    if (!document.getElementById('feedin_target_input').matches(':focus')) {
-        document.getElementById('feedin_target_input').value = Math.round(data.feedInControl_target || 0);
+
+    // Status LED - only update if data is available
+    if (typeof data.statusLED_mode !== 'undefined') {
+        const ledModes = ['Boot', 'WiFi Connecting', 'WiFi Connected', 'Normal Operation', 'Error'];
+        updateElement('statusLED_mode', ledModes[data.statusLED_mode] || 'Unknown');
     }
-    if (!document.getElementById('feedin_max_input').matches(':focus')) {
-        document.getElementById('feedin_max_input').value = Math.round(data.feedInControl_max || 5000);
+
+    // Feed-in Power Control - only update if data is available
+    if (typeof data.feedInControl_enabled !== 'undefined') {
+        const feedInEnabled = data.feedInControl_enabled || false;
+        updateElement('feedin_status', feedInEnabled ? 'Aktiv' : 'Inaktiv');
+        updateElementStyle('feedin_status', 'color', feedInEnabled ? 'var(--victron-green)' : 'var(--victron-red)');
+        updateElement('feedin_current', Math.round(data.feedInControl_current || 0), ' W');
+        updateElement('feedin_target', Math.round(data.feedInControl_target || 0), ' W');
+        updateElement('feedin_max', Math.round(data.feedInControl_max || 0), ' W');
+
+        // Update form inputs if not currently being edited
+        const feedinEnabledInput = getElement('feedin_enabled');
+        if (feedinEnabledInput && !feedinEnabledInput.matches(':focus')) {
+            feedinEnabledInput.checked = feedInEnabled;
+        }
+
+        const feedinTargetInput = getElement('feedin_target_input');
+        if (feedinTargetInput && !feedinTargetInput.matches(':focus')) {
+            feedinTargetInput.value = Math.round(data.feedInControl_target || 0);
+        }
+
+        const feedinMaxInput = getElement('feedin_max_input');
+        if (feedinMaxInput && !feedinMaxInput.matches(':focus')) {
+            feedinMaxInput.value = Math.round(data.feedInControl_max || 5000);
+        }
     }
-    
-    // MQTT Status (if available in data)
+
+    // MQTT Status - only update if data is available
     if (data.mqtt) {
         const mqttConnected = data.mqtt.connected || false;
-        document.getElementById('mqtt_status').textContent = mqttConnected ? 'Verbunden' : 'Getrennt';
-        document.getElementById('mqtt_status').style.color = mqttConnected ? 'var(--victron-green)' : 'var(--victron-red)';
-        document.getElementById('mqtt_server').textContent = data.mqtt.server || '---';
-        document.getElementById('mqtt_port').textContent = data.mqtt.port || '---';
-        document.getElementById('mqtt_last_message').textContent = new Date().toLocaleTimeString();
+        updateElement('mqtt_status', mqttConnected ? 'Verbunden' : 'Getrennt');
+        updateElementStyle('mqtt_status', 'color', mqttConnected ? 'var(--victron-green)' : 'var(--victron-red)');
+        updateElement('mqtt_server', data.mqtt.server || '---');
+        updateElement('mqtt_port', data.mqtt.port || '---');
+        updateElement('mqtt_last_message', new Date().toLocaleTimeString());
     }
-    
-    // Protection & Warnings
-    document.getElementById('battery_protection1').textContent = '0x' + (data.battery_protectionFlags1 ? data.battery_protectionFlags1.toString(16).toUpperCase() : '?');
-    document.getElementById('battery_protection2').textContent = '0x' + (data.battery_protectionFlags2 ? data.battery_protectionFlags2.toString(16).toUpperCase() : '?');
-    document.getElementById('battery_warning1').textContent = '0x' + (data.battery_warningFlags1 ? data.battery_warningFlags1.toString(16).toUpperCase() : '?');
-    document.getElementById('battery_warning2').textContent = '0x' + (data.battery_warningFlags2 ? data.battery_warningFlags2.toString(16).toUpperCase() : '?');
-    document.getElementById('battery_request').textContent = '0x' + (data.battery_requestFlags ? data.battery_requestFlags.toString(16).toUpperCase() : '?');
-    
-    // Control & Diagnostics
-    document.getElementById('minimum_feedin').textContent = (data.minimumFeedIn || '?') + ' W';
-    document.getElementById('avg_ctrl_deviation').textContent = (data.averageControlDeviationFeedIn || '?') + ' W';
-    document.getElementById('avg_charging_power').textContent = (data.averageChargingPower || '?') + ' W';
-    document.getElementById('power_trend_cons').textContent = (data.powerTrendConsumption || '?') + ' Wh';
-    document.getElementById('power_trend_feed').textContent = (data.powerTrendFeedIn || '?') + ' Wh';
+
+    // Protection & Warnings - only update if data is available
+    if (typeof data.battery_protectionFlags1 !== 'undefined') {
+        updateElement('battery_protection1', '0x' + (data.battery_protectionFlags1 ? data.battery_protectionFlags1.toString(16).toUpperCase() : '?'));
+        updateElement('battery_protection2', '0x' + (data.battery_protectionFlags2 ? data.battery_protectionFlags2.toString(16).toUpperCase() : '?'));
+        updateElement('battery_warning1', '0x' + (data.battery_warningFlags1 ? data.battery_warningFlags1.toString(16).toUpperCase() : '?'));
+        updateElement('battery_warning2', '0x' + (data.battery_warningFlags2 ? data.battery_warningFlags2.toString(16).toUpperCase() : '?'));
+        updateElement('battery_request', '0x' + (data.battery_requestFlags ? data.battery_requestFlags.toString(16).toUpperCase() : '?'));
+    }
+
+    // Control & Diagnostics - only update if data is available
+    if (typeof data.minimumFeedIn !== 'undefined') {
+        updateElement('minimum_feedin', (data.minimumFeedIn || '?'), ' W');
+        updateElement('avg_ctrl_deviation', (data.averageControlDeviationFeedIn || '?'), ' W');
+        updateElement('avg_charging_power', (data.averageChargingPower || '?'), ' W');
+        updateElement('power_trend_cons', (data.powerTrendConsumption || '?'), ' Wh');
+        updateElement('power_trend_feed', (data.powerTrendFeedIn || '?'), ' Wh');
+    }
+}
+
+// Smart update function that only processes available data sections
+function updateData(data) {
+    if (!data) return;
+
+    // Battery data section
+    if (hasBatteryData(data)) {
+        updateBatteryData(data);
+    }
+
+    // MultiPlus data section
+    if (hasMultiPlusData(data)) {
+        updateMultiPlusData(data);
+    }
+
+    // ESS data section
+    if (hasESSData(data)) {
+        updateESSData(data);
+    }
+
+    // VE.Bus data section
+    if (hasVEbusData(data)) {
+        updateVEbusData(data);
+    }
+
+    // System data section
+    if (hasSystemData(data)) {
+        updateSystemData(data);
+    }
+
+    // MQTT data section
+    if (hasMQTTData(data)) {
+        updateMQTTData(data);
+    }
+
+    // Protection/Warnings data section
+    if (hasProtectionData(data)) {
+        updateProtectionData(data);
+    }
+
+    // Control/Diagnostics data section
+    if (hasControlData(data)) {
+        updateControlData(data);
+    }
+}
+
+// Helper functions to check if specific data sections are available
+function hasBatteryData(data) {
+    return typeof data.battery_soc !== 'undefined' ||
+           typeof data.battery_voltage !== 'undefined' ||
+           typeof data.battery_current !== 'undefined' ||
+           typeof data.battery_temperature !== 'undefined' ||
+           typeof data.battery_soh !== 'undefined' ||
+           typeof data.battery_chargeVoltage !== 'undefined' ||
+           typeof data.battery_chargeCurrentLimit !== 'undefined' ||
+           typeof data.battery_dischargeCurrentLimit !== 'undefined' ||
+           typeof data.battery_manufacturer !== 'undefined';
+}
+
+function hasMultiPlusData(data) {
+    return typeof data.multiplusDcVoltage !== 'undefined' ||
+           typeof data.multiplusDcCurrent !== 'undefined' ||
+           typeof data.multiplusUMainsRMS !== 'undefined' ||
+           typeof data.multiplusAcFrequency !== 'undefined' ||
+           typeof data.multiplusPinverterFiltered !== 'undefined' ||
+           typeof data.multiplusPmainsFiltered !== 'undefined' ||
+           typeof data.multiplusPowerFactor !== 'undefined' ||
+           typeof data.multiplusTemp !== 'undefined' ||
+           typeof data.multiplusStatus80 !== 'undefined' ||
+           typeof data.masterMultiLED_ActualInputCurrentLimit !== 'undefined';
+}
+
+function hasESSData(data) {
+    return typeof data.multiplusESSpower !== 'undefined' ||
+           typeof data.switchMode !== 'undefined' ||
+           typeof data.essPowerStrategy !== 'undefined' ||
+           typeof data.secondsInMinStrategy !== 'undefined' ||
+           typeof data.secondsInMaxStrategy !== 'undefined' ||
+           typeof data.bmsPowerAverage !== 'undefined';
+}
+
+function hasVEbusData(data) {
+    return typeof data.veBus_isOnline !== 'undefined' ||
+           typeof data.veBus_communicationQuality !== 'undefined' ||
+           typeof data.veBus_framesSent !== 'undefined' ||
+           typeof data.veBus_framesReceived !== 'undefined' ||
+           typeof data.veBus_checksumErrors !== 'undefined' ||
+           typeof data.veBus_timeoutErrors !== 'undefined';
+}
+
+function hasSystemData(data) {
+    return typeof data.statusLED_mode !== 'undefined' ||
+           typeof data.feedInControl_enabled !== 'undefined' ||
+           typeof data.feedInControl_current !== 'undefined' ||
+           typeof data.feedInControl_target !== 'undefined' ||
+           typeof data.feedInControl_max !== 'undefined';
+}
+
+function hasMQTTData(data) {
+    return data.mqtt && typeof data.mqtt.connected !== 'undefined';
+}
+
+function hasProtectionData(data) {
+    return typeof data.battery_protectionFlags1 !== 'undefined' ||
+           typeof data.battery_protectionFlags2 !== 'undefined' ||
+           typeof data.battery_warningFlags1 !== 'undefined' ||
+           typeof data.battery_warningFlags2 !== 'undefined' ||
+           typeof data.battery_requestFlags !== 'undefined';
+}
+
+function hasControlData(data) {
+    return typeof data.minimumFeedIn !== 'undefined' ||
+           typeof data.averageControlDeviationFeedIn !== 'undefined' ||
+           typeof data.averageChargingPower !== 'undefined' ||
+           typeof data.powerTrendConsumption !== 'undefined' ||
+           typeof data.powerTrendFeedIn !== 'undefined';
 }
 
 function formatTime(seconds) {
@@ -142,6 +333,140 @@ function formatTime(seconds) {
     const m = Math.floor((seconds % 3600) / 60);
     const s = seconds % 60;
     return h.toString().padStart(2, '0') + ':' + m.toString().padStart(2, '0') + ':' + s.toString().padStart(2, '0');
+}
+
+// Specific update functions for each data section
+function updateBatteryData(data) {
+    const soc = data.battery_soc || 0;
+    updateElement('battery_soc', soc, '%');
+    updateElement('battery_voltage', (data.battery_voltage || '?'), ' V');
+    updateElement('battery_current', (data.battery_current || '?'), ' A');
+    updateElement('battery_temperature', (data.battery_temperature || '?'), ' °C');
+    updateElement('battery_soh', (data.battery_soh || '?'), '%');
+    updateElement('battery_charge_voltage', (data.battery_chargeVoltage || '?'), ' V');
+    updateElement('battery_charge_current_limit', (data.battery_chargeCurrentLimit || '?'), ' A');
+    updateElement('battery_discharge_current_limit', (data.battery_dischargeCurrentLimit || '?'), ' A');
+    updateElement('battery_manufacturer', data.battery_manufacturer || '---');
+
+    // Update battery SOC progress bar
+    const progressBar = getElement('battery-progress');
+    if (progressBar) {
+        progressBar.style.width = Math.max(0, Math.min(100, soc)) + '%';
+        if (soc > 70) {
+            progressBar.style.background = 'linear-gradient(90deg, var(--victron-green), #20C997)';
+        } else if (soc > 30) {
+            progressBar.style.background = 'linear-gradient(90deg, var(--victron-orange), #FFB347)';
+        } else {
+            progressBar.style.background = 'linear-gradient(90deg, var(--victron-red), #FF6B6B)';
+        }
+    }
+}
+
+function updateMultiPlusData(data) {
+    updateElement('multiplus_dc_voltage', (data.multiplusDcVoltage || '?'), ' V');
+    updateElement('multiplus_dc_current', (data.multiplusDcCurrent || '?'), ' A');
+    updateElement('multiplus_ac_voltage', (data.multiplusUMainsRMS || '?'), ' V');
+    updateElement('multiplus_ac_frequency', (data.multiplusAcFrequency || '?'), ' Hz');
+    updateElement('multiplus_inverter_power', (data.multiplusPinverterFiltered || '?'), ' W');
+    updateElement('multiplus_acin_power', (data.multiplusPmainsFiltered || '?'), ' W');
+    updateElement('multiplus_power_factor', data.multiplusPowerFactor || '---');
+    updateElement('multiplus_temperature', (data.multiplusTemp || '?'), ' °C');
+    updateElement('multiplus_status', data.multiplusStatus80 || '---');
+    updateElement('multiplus_current_limit', (data.masterMultiLED_ActualInputCurrentLimit || '?'), ' A');
+}
+
+function updateESSData(data) {
+    const essPower = data.multiplusESSpower || 0;
+    updateElement('ess_power', Math.abs(essPower), ' W');
+
+    const powerDirection = getElement('power_direction');
+    const essPowerElement = getElement('ess_power');
+    if (powerDirection && essPowerElement) {
+        if (essPower > 100) {
+            powerDirection.textContent = 'Charging';
+            essPowerElement.style.color = 'var(--victron-green)';
+        } else if (essPower < -100) {
+            powerDirection.textContent = 'Discharging';
+            essPowerElement.style.color = 'var(--victron-orange)';
+        } else {
+            powerDirection.textContent = 'Standby';
+            essPowerElement.style.color = 'var(--victron-blue)';
+        }
+    }
+
+    updateElement('switch_mode', data.switchMode || '---');
+    updateElement('strategy', data.essPowerStrategy || '---');
+    updateElement('min_strategy_time', formatTime(data.secondsInMinStrategy || 0));
+    updateElement('max_strategy_time', formatTime(data.secondsInMaxStrategy || 0));
+    updateElement('avg_bms_power', Math.round(data.bmsPowerAverage || 0), ' W');
+}
+
+function updateVEbusData(data) {
+    const vebusIndicator = getElement('vebus-indicator');
+    const vebusOnline = data.veBus_isOnline;
+    updateElement('vebus_online', vebusOnline ? 'Online' : 'Offline');
+
+    if (vebusIndicator) {
+        vebusIndicator.className = 'status-indicator ' + (vebusOnline ? 'status-online' : 'status-offline');
+    }
+
+    updateElement('vebus_quality', Math.round((data.veBus_communicationQuality || 0) * 100), '%');
+    updateElement('vebus_frames_sent', data.veBus_framesSent || '0');
+    updateElement('vebus_frames_received', data.veBus_framesReceived || '0');
+    updateElement('vebus_errors', ((data.veBus_checksumErrors || 0) + (data.veBus_timeoutErrors || 0)));
+}
+
+function updateSystemData(data) {
+    const ledModes = ['Boot', 'WiFi Connecting', 'WiFi Connected', 'Normal Operation', 'Error'];
+    updateElement('statusLED_mode', ledModes[data.statusLED_mode] || 'Unknown');
+
+    const feedInEnabled = data.feedInControl_enabled || false;
+    updateElement('feedin_status', feedInEnabled ? 'Aktiv' : 'Inaktiv');
+    updateElementStyle('feedin_status', 'color', feedInEnabled ? 'var(--victron-green)' : 'var(--victron-red)');
+    updateElement('feedin_current', Math.round(data.feedInControl_current || 0), ' W');
+    updateElement('feedin_target', Math.round(data.feedInControl_target || 0), ' W');
+    updateElement('feedin_max', Math.round(data.feedInControl_max || 0), ' W');
+
+    // Update form inputs if not currently being edited
+    const feedinEnabledInput = getElement('feedin_enabled');
+    if (feedinEnabledInput && !feedinEnabledInput.matches(':focus')) {
+        feedinEnabledInput.checked = feedInEnabled;
+    }
+
+    const feedinTargetInput = getElement('feedin_target_input');
+    if (feedinTargetInput && !feedinTargetInput.matches(':focus')) {
+        feedinTargetInput.value = Math.round(data.feedInControl_target || 0);
+    }
+
+    const feedinMaxInput = getElement('feedin_max_input');
+    if (feedinMaxInput && !feedinMaxInput.matches(':focus')) {
+        feedinMaxInput.value = Math.round(data.feedInControl_max || 5000);
+    }
+}
+
+function updateMQTTData(data) {
+    const mqttConnected = data.mqtt.connected || false;
+    updateElement('mqtt_status', mqttConnected ? 'Verbunden' : 'Getrennt');
+    updateElementStyle('mqtt_status', 'color', mqttConnected ? 'var(--victron-green)' : 'var(--victron-red)');
+    updateElement('mqtt_server', data.mqtt.server || '---');
+    updateElement('mqtt_port', data.mqtt.port || '---');
+    updateElement('mqtt_last_message', new Date().toLocaleTimeString());
+}
+
+function updateProtectionData(data) {
+    updateElement('battery_protection1', '0x' + (data.battery_protectionFlags1 ? data.battery_protectionFlags1.toString(16).toUpperCase() : '?'));
+    updateElement('battery_protection2', '0x' + (data.battery_protectionFlags2 ? data.battery_protectionFlags2.toString(16).toUpperCase() : '?'));
+    updateElement('battery_warning1', '0x' + (data.battery_warningFlags1 ? data.battery_warningFlags1.toString(16).toUpperCase() : '?'));
+    updateElement('battery_warning2', '0x' + (data.battery_warningFlags2 ? data.battery_warningFlags2.toString(16).toUpperCase() : '?'));
+    updateElement('battery_request', '0x' + (data.battery_requestFlags ? data.battery_requestFlags.toString(16).toUpperCase() : '?'));
+}
+
+function updateControlData(data) {
+    updateElement('minimum_feedin', (data.minimumFeedIn || '?'), ' W');
+    updateElement('avg_ctrl_deviation', (data.averageControlDeviationFeedIn || '?'), ' W');
+    updateElement('avg_charging_power', (data.averageChargingPower || '?'), ' W');
+    updateElement('power_trend_cons', (data.powerTrendConsumption || '?'), ' Wh');
+    updateElement('power_trend_feed', (data.powerTrendFeedIn || '?'), ' Wh');
 }
 
 function formatTimeFromSeconds(totalSeconds) {
@@ -163,12 +488,14 @@ function longPress() {
 
 function manualRefresh() {
     // Visual feedback
-    const btn = document.querySelector('.refresh-btn');
-    btn.style.transform = 'scale(0.9) rotate(180deg)';
-    setTimeout(() => {
-        btn.style.transform = 'scale(1) rotate(0deg)';
-    }, 200);
-    
+    const btn = getElement('.refresh-btn');
+    if (btn) {
+        btn.style.transform = 'scale(0.9) rotate(180deg)';
+        setTimeout(() => {
+            btn.style.transform = 'scale(1) rotate(0deg)';
+        }, 200);
+    }
+
     // Reconnect WebSocket if needed
     if (ws.readyState !== WebSocket.OPEN) {
         connectWS();
@@ -178,16 +505,16 @@ function manualRefresh() {
 // MQTT Configuration Modal Functions
 function openMqttModal() {
     console.log('Opening MQTT modal...');
-    const modal = document.getElementById('mqttModal');
+    const modal = getElement('mqttModal');
     if (!modal) {
         console.error('MQTT modal not found!');
         return;
     }
     modal.style.display = 'block';
     loadMqttConfig();
-    
+
     // Add event listener when modal opens
-    const form = document.getElementById('mqtt_modal_form');
+    const form = getElement('mqtt_modal_form');
     if (form && !form.hasAttribute('data-listener-added')) {
         console.log('Adding form submit event listener...');
         form.addEventListener('submit', handleMqttFormSubmit);
@@ -200,12 +527,15 @@ function openMqttModal() {
 }
 
 function closeMqttModal() {
-    document.getElementById('mqttModal').style.display = 'none';
+    const modal = getElement('mqttModal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
 }
 
 // Close modal when clicking outside
 window.onclick = function(event) {
-    const modal = document.getElementById('mqttModal');
+    const modal = getElement('mqttModal');
     if (event.target === modal) {
         closeMqttModal();
     }
@@ -224,12 +554,21 @@ function loadMqttConfig() {
     })
     .then(data => {
         console.log('MQTT config data:', data);
-        document.getElementById('mqtt_server_input').value = data.server || '';
-        document.getElementById('mqtt_port_input').value = data.port || 1883;
-        document.getElementById('mqtt_username_input').value = data.username || '';
+        const serverInput = getElement('mqtt_server_input');
+        if (serverInput) serverInput.value = data.server || '';
+
+        const portInput = getElement('mqtt_port_input');
+        if (portInput) portInput.value = data.port || 1883;
+
+        const usernameInput = getElement('mqtt_username_input');
+        if (usernameInput) usernameInput.value = data.username || '';
+
         // Don't populate password field for security reasons
-        document.getElementById('mqtt_password_input').value = '';
-        document.getElementById('mqtt_password_input').placeholder = data.password ? 'Password set (hidden)' : 'Enter password';
+        const passwordInput = getElement('mqtt_password_input');
+        if (passwordInput) {
+            passwordInput.value = '';
+            passwordInput.placeholder = data.password ? 'Password set (hidden)' : 'Enter password';
+        }
     })
     .catch(error => {
         console.error('Error loading MQTT config:', error);
@@ -239,12 +578,17 @@ function loadMqttConfig() {
 // Handle MQTT modal form submission
 function handleMqttFormSubmit(e) {
     e.preventDefault();
-    
+
+    const serverInput = getElement('mqtt_server_input');
+    const portInput = getElement('mqtt_port_input');
+    const usernameInput = getElement('mqtt_username_input');
+    const passwordInput = getElement('mqtt_password_input');
+
     const mqttConfig = {
-        server: document.getElementById('mqtt_server_input').value.trim(),
-        port: parseInt(document.getElementById('mqtt_port_input').value),
-        username: document.getElementById('mqtt_username_input').value.trim(),
-        password: document.getElementById('mqtt_password_input').value.trim()
+        server: serverInput ? serverInput.value.trim() : '',
+        port: portInput ? parseInt(portInput.value) : 1883,
+        username: usernameInput ? usernameInput.value.trim() : '',
+        password: passwordInput ? passwordInput.value.trim() : ''
     };
 
     if (!mqttConfig.server) {
@@ -254,9 +598,11 @@ function handleMqttFormSubmit(e) {
 
     // Disable form during submission
     const submitBtn = e.target.querySelector('button[type="submit"]');
-    const originalText = submitBtn.textContent;
-    submitBtn.textContent = '💾 Speichere...';
-    submitBtn.disabled = true;
+    const originalText = submitBtn ? submitBtn.textContent : 'Speichern';
+    if (submitBtn) {
+        submitBtn.textContent = '💾 Speichere...';
+        submitBtn.disabled = true;
+    }
 
     console.log('Sending MQTT config:', mqttConfig);
 
@@ -286,11 +632,14 @@ function handleMqttFormSubmit(e) {
         alert('Fehler beim Speichern der MQTT-Konfiguration: ' + error.message);
     })
     .finally(() => {
-        submitBtn.textContent = originalText;
-        submitBtn.disabled = false;
+        if (submitBtn) {
+            submitBtn.textContent = originalText;
+            submitBtn.disabled = false;
+        }
     });
 }
 
+// Load current MQTT status for display
 // Load current MQTT status for display
 function loadMqttStatus() {
     console.log('Loading MQTT status...');
@@ -305,44 +654,56 @@ function loadMqttStatus() {
     .then(data => {
         console.log('MQTT status data:', data);
         const mqttConnected = data.connected || false;
-        document.getElementById('mqtt_status').textContent = mqttConnected ? 'Verbunden ✅' : 'Getrennt ❌';
-        document.getElementById('mqtt_server_display').textContent = data.server || 'Nicht konfiguriert';
-        document.getElementById('mqtt_port_display').textContent = data.port || '---';
-        document.getElementById('mqtt_last_message').textContent = data.lastMessage || 'Keine';
+        updateElement('mqtt_status', mqttConnected ? 'Verbunden ✅' : 'Getrennt ❌');
+        updateElementStyle('mqtt_status', 'color', mqttConnected ? 'var(--victron-green)' : 'var(--victron-red)');
+        updateElement('mqtt_server_display', data.server || 'Nicht konfiguriert');
+        updateElement('mqtt_port_display', data.port || '---');
+        updateElement('mqtt_last_message', data.lastMessage || 'Keine');
     })
     .catch(error => {
         console.error('Error loading MQTT status:', error);
-        document.getElementById('mqtt_status').textContent = 'Fehler beim Laden ❌';
-        document.getElementById('mqtt_server_display').textContent = 'API-Fehler';
-        document.getElementById('mqtt_port_display').textContent = '---';
-        document.getElementById('mqtt_last_message').textContent = error.message;
+        updateElement('mqtt_status', 'Fehler beim Laden ❌');
+        updateElement('mqtt_server_display', 'API-Fehler');
+        updateElement('mqtt_port_display', '---');
+        updateElement('mqtt_last_message', error.message);
     });
 }
 
 // Event listeners that need to be added after DOM loads
 document.addEventListener('DOMContentLoaded', function() {
-    // MQTT configuration form handler
-    const mqttForm = document.getElementById('mqtt_form');
-    if (mqttForm) {
+    // MQTT configuration form handler (only if modal form doesn't exist)
+    const mqttModalForm = getElement('mqtt_modal_form');
+    const mqttForm = getElement('mqtt_form');
+
+    if (mqttModalForm && !mqttModalForm.hasAttribute('data-listener-added')) {
+        // Use the modal form handler
+        console.log('MQTT modal form found, listener should already be added');
+    } else if (mqttForm && !mqttForm.hasAttribute('data-listener-added')) {
+        console.log('Adding MQTT form submit event listener...');
         mqttForm.addEventListener('submit', function(e) {
             e.preventDefault();
-            
-            const server = document.getElementById('mqtt_server_input').value.trim();
-            const port = parseInt(document.getElementById('mqtt_port_input').value) || 1883;
-            const username = document.getElementById('mqtt_username_input').value.trim();
-            const password = document.getElementById('mqtt_password_input').value;
-            
+
+            const serverInput = getElement('mqtt_server_input');
+            const portInput = getElement('mqtt_port_input');
+            const usernameInput = getElement('mqtt_username_input');
+            const passwordInput = getElement('mqtt_password_input');
+
+            const server = serverInput ? serverInput.value.trim() : '';
+            const port = portInput ? (parseInt(portInput.value) || 1883) : 1883;
+            const username = usernameInput ? usernameInput.value.trim() : '';
+            const password = passwordInput ? passwordInput.value : '';
+
             if (!server) {
                 alert('Bitte geben Sie einen MQTT-Server ein.');
                 return;
             }
-            
+
             const formData = new FormData();
             formData.append('server', server);
             formData.append('port', port);
             if (username) formData.append('username', username);
             if (password) formData.append('password', password);
-            
+
             fetch('/api/mqtt', {
                 method: 'POST',
                 body: formData
@@ -359,17 +720,22 @@ document.addEventListener('DOMContentLoaded', function() {
                 alert('Fehler beim Aktualisieren der MQTT-Konfiguration: ' + error.message);
             });
         });
+        mqttForm.setAttribute('data-listener-added', 'true');
     }
 
     // Feed-in control form handler
-    const feedinForm = document.getElementById('feedin_form');
+    const feedinForm = getElement('feedin_form');
     if (feedinForm) {
         feedinForm.addEventListener('submit', function(e) {
             e.preventDefault();
-            
-            const enabled = document.getElementById('feedin_enabled').checked;
-            const target = parseFloat(document.getElementById('feedin_target_input').value) || 0;
-            const max = parseFloat(document.getElementById('feedin_max_input').value) || 5000;
+
+            const enabledInput = getElement('feedin_enabled');
+            const targetInput = getElement('feedin_target_input');
+            const maxInput = getElement('feedin_max_input');
+
+            const enabled = enabledInput ? enabledInput.checked : false;
+            const target = targetInput ? (parseFloat(targetInput.value) || 0) : 0;
+            const max = maxInput ? (parseFloat(maxInput.value) || 5000) : 5000;
             
             const formData = new FormData();
             formData.append('enabled', enabled ? 'true' : 'false');

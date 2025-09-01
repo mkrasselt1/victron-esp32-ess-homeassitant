@@ -169,6 +169,8 @@ void sendFullStatusToClient(AsyncWebSocketClient *client) {
   
   // VE.Bus data
   auto veBusStats = veBusHandler.getStatistics();
+  Serial.printf("DEBUG: VE.Bus stats - framesSent: %u, framesReceived: %u, isRunning: %d\n",
+                veBusStats.framesSent, veBusStats.framesReceived, veBusHandler.isTaskRunning());
   doc["veBus_isOnline"] = veBusHandler.isTaskRunning();
   doc["veBus_communicationQuality"] = veBusHandler.getCommunicationQuality();
   doc["veBus_framesSent"] = veBusStats.framesSent;
@@ -522,17 +524,17 @@ void setup() {
   Serial.println("\nVictron ESS Controller Starting...");
   
   // Initialize system data with default values
-  systemData.battery.voltage = 48.0;
+  systemData.battery.voltage = 0.0;
   systemData.battery.current = 0.0;
   systemData.battery.power = 0;
   systemData.battery.soc = 0;
-  systemData.battery.temperature = 25.0;
+  systemData.battery.temperature = 0.0;
   
-  systemData.multiplus.dcVoltage = 48.0;
+  systemData.multiplus.dcVoltage = 0.0;
   systemData.multiplus.dcCurrent = 0.0;
-  systemData.multiplus.temp = 25.0;
-  systemData.multiplus.acFrequency = 50.0;
-  systemData.multiplus.uMainsRMS = 230.0;
+  systemData.multiplus.temp = 0.0;
+  systemData.multiplus.acFrequency = 0.0;
+  systemData.multiplus.uMainsRMS = 0.0;
   
   // Initialize StatusLED
   statusLED.begin();
@@ -563,6 +565,7 @@ void setup() {
     statusLED.setErrorMode();
   } else {
     Serial.println("VE.Bus communication started");
+    veBusHandler.enableDebugMode(true); // Enable debug output
   }
   
   // Initialize Pylontech CAN communication (separate task)

@@ -21,13 +21,23 @@
 
 // VE.Bus Communication Configuration
 #define VEBUS_SERIAL_PORT 2
-#define VEBUS_BAUD_RATE 19200
-#define VEBUS_RX_PIN 16
-#define VEBUS_TX_PIN 17
+#define VEBUS_BAUD_RATE 256000  // Updated to MK3 protocol baudrate
+#define VEBUS_RX_PIN 21         // RS485_RX = IO21
+#define VEBUS_TX_PIN 22         // RS485_TX = IO22
+#define VEBUS_DE_PIN 17         // RS485_EN = IO17 (Driver Enable)
+#define VEBUS_SE_PIN 19         // RS485_SE = IO19 (Send Enable)
 #define VEBUS_QUEUE_SIZE 10
 #define VEBUS_TASK_STACK_SIZE 4096
 #define VEBUS_TASK_PRIORITY 2
 #define VEBUS_TASK_CORE 1
+
+// MK3 Protocol Constants
+#define VEBUS_MK3_HEADER1 0x98
+#define VEBUS_MK3_HEADER2 0xF7
+#define VEBUS_MK3_DATA_FRAME 0xFE
+#define VEBUS_MK3_END_FRAME 0xFF
+#define VEBUS_MK3_STUFF_BYTE 0xFA
+#define VEBUS_BROADCAST_ADDRESS 0x00
 
 // Command Queue Item
 struct VeBusCommandItem {
@@ -93,7 +103,12 @@ private:
     static void taskWrapper(void* parameter);
     void communicationTask();
     bool receiveFrame(VeBusFrame& frame);
+    bool parseMk2Frame(VeBusFrame& frame);
+    bool parseMk3Frame(VeBusFrame& frame);
     bool sendFrame(const VeBusFrame& frame);
+    bool sendFrameMk3Correct(const VeBusFrame& frame);
+    int commandReplaceFAtoFF(uint8_t *outbuf, const uint8_t *inbuf, int inlength);
+    int appendChecksum(uint8_t *buf, int inlength);
     void processReceivedFrame(const VeBusFrame& frame);
     void handleTimeout();
     void updateStatistics();

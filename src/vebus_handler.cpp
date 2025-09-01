@@ -30,9 +30,20 @@ VeBusHandler::~VeBusHandler() {
 }
 
 bool VeBusHandler::begin(int rxPin, int txPin, long baudRate) {
-    // Initialize hardware serial
+    // Initialize hardware serial for RS485
     serial = &Serial2;
     serial->begin(baudRate, SERIAL_8N1, rxPin, txPin);
+    
+    // Configure RS485 half-duplex mode - try to enable it
+    pinMode(VEBUS_DE_PIN, OUTPUT);  // Driver Enable
+    pinMode(VEBUS_SE_PIN, OUTPUT);  // Send Enable
+    digitalWrite(VEBUS_DE_PIN, LOW);  // Start in receive mode
+    digitalWrite(VEBUS_SE_PIN, LOW);  // Start in receive mode
+    
+    // Try to set RS485 mode if available
+    #ifdef UART_MODE_RS485_HALF_DUPLEX
+    serial->setMode(UART_MODE_RS485_HALF_DUPLEX);
+    #endif
     
     // Create mutex for thread-safe access
     mutex = xSemaphoreCreateMutex();
@@ -71,7 +82,8 @@ bool VeBusHandler::begin(int rxPin, int txPin, long baudRate) {
     stats.reset();
     resetRxBuffer();
     
-    Serial.println("VeBus: Communication handler initialized");
+    Serial.printf("VeBus: MK3 Communication handler initialized at %ld baud (RX:IO%d, TX:IO%d, DE:IO%d, SE:IO%d)\n", 
+                 baudRate, rxPin, txPin, VEBUS_DE_PIN, VEBUS_SE_PIN);
     return true;
 }
 
@@ -145,6 +157,37 @@ void VeBusHandler::communicationTask() {
             handleTimeout();
         }
         
+        // Send periodic status request to generate some frame traffic
+        static uint32_t lastStatusRequest = 0;
+        static uint8_t frameNumber = 0;
+        if (millis() - lastStatusRequest > 5000) { // Every 5 seconds
+            VeBusFrame statusFrame;
+            statusFrame.isMk3Frame = true;
+            statusFrame.frameNumber = frameNumber++;
+            statusFrame.command = 0x30;  // Read RAM command
+            statusFrame.length = 4;      // 4 bytes of data
+            statusFrame.data[0] = 0x04;  // Battery voltage
+            statusFrame.data[1] = 0x0E;  // AC Power
+            statusFrame.data[2] = 0x00;  // Padding
+            statusFrame.data[3] = 0x00;  // Padding
+            
+            // Calculate MK3 checksum
+            statusFrame.calculateChecksum();
+            
+            // Send directly instead of queuing to ensure it gets sent
+            if (sendFrame(statusFrame)) {
+                stats.framesSent++;  // Increment counter immediately
+                lastStatusRequest = millis();
+                if (debugMode) {
+                    Serial.printf("VeBus: Sent periodic MK3 status request (frame #%d)\n", frameNumber - 1);
+                }
+            } else {
+                if (debugMode) {
+                    Serial.println("VeBus: Failed to send periodic status request");
+                }
+            }
+        }
+        
         // Update device online status
         if (deviceState.isStale()) {
             if (xSemaphoreTake(mutex, portMAX_DELAY) == pdTRUE) {
@@ -165,9 +208,20 @@ bool VeBusHandler::receiveFrame(VeBusFrame& frame) {
         uint8_t byte = serial->read();
         lastRxTime = millis();
         
-        // Look for sync byte
-        if (rxBufferPos == 0 && byte != VEBUS_SYNC_BYTE) {
-            continue;
+        // Look for MK3 header or MK2 sync byte
+        if (rxBufferPos == 0) {
+            if (byte == VEBUS_MK3_HEADER1) {
+                // Start of MK3 frame
+                rxBuffer[rxBufferPos++] = byte;
+                continue;
+            } else if (byte == VEBUS_SYNC_BYTE) {
+                // Start of MK2 frame
+                rxBuffer[rxBufferPos++] = byte;
+                continue;
+            } else {
+                // Not a valid frame start
+                continue;
+            }
         }
         
         // Store byte in buffer
@@ -182,25 +236,24 @@ bool VeBusHandler::receiveFrame(VeBusFrame& frame) {
         
         // Check if frame is complete
         if (isFrameComplete()) {
-            // Copy to frame structure
-            frame.sync = rxBuffer[0];
-            frame.address = rxBuffer[1];
-            frame.command = rxBuffer[2];
-            frame.length = rxBuffer[3];
+            bool frameValid = false;
             
-            uint8_t dataLength = min(frame.length, (uint8_t)28);
-            memcpy(frame.data, &rxBuffer[4], dataLength);
-            frame.checksum = rxBuffer[4 + dataLength];
+            if (rxBuffer[0] == VEBUS_MK3_HEADER1 && rxBuffer[1] == VEBUS_MK3_HEADER2) {
+                // MK3 Frame
+                frameValid = parseMk3Frame(frame);
+            } else if (rxBuffer[0] == VEBUS_SYNC_BYTE) {
+                // MK2 Frame
+                frameValid = parseMk2Frame(frame);
+            }
             
             resetRxBuffer();
             
-            // Validate checksum
-            if (frame.isChecksumValid()) {
+            if (frameValid) {
                 return true;
             } else {
                 stats.checksumErrors++;
                 if (debugMode) {
-                    Serial.printf("VeBus: Checksum error on frame type 0x%02X\n", frame.command);
+                    Serial.println("VeBus: Frame parsing/checksum error");
                 }
             }
         }
@@ -215,29 +268,218 @@ bool VeBusHandler::receiveFrame(VeBusFrame& frame) {
     return false;
 }
 
+bool VeBusHandler::parseMk2Frame(VeBusFrame& frame) {
+    if (rxBufferPos < 5) return false;  // Minimum MK2 frame size
+    
+    frame.isMk3Frame = false;
+    frame.sync = rxBuffer[0];
+    frame.address = rxBuffer[1];
+    frame.command = rxBuffer[2];
+    frame.length = rxBuffer[3];
+    
+    uint8_t expectedLength = 4 + frame.length + 1;  // Header + data + checksum
+    if (rxBufferPos < expectedLength) return false;
+    
+    uint8_t dataLength = min(frame.length, (uint8_t)VEBUS_MK3_MAX_DATA_SIZE);
+    memcpy(frame.data, &rxBuffer[4], dataLength);
+    frame.checksum = rxBuffer[4 + dataLength];
+    
+    return frame.isChecksumValid();
+}
+
+bool VeBusHandler::parseMk3Frame(VeBusFrame& frame) {
+    if (rxBufferPos < 8) return false;  // Minimum MK3 frame size
+    
+    frame.isMk3Frame = true;
+    
+    // Check for end of frame
+    if (rxBuffer[rxBufferPos - 1] != VEBUS_MK3_END_FRAME) return false;
+    
+    // Extract frame number
+    frame.frameNumber = rxBuffer[3];
+    
+    // Destuff the frame data
+    uint8_t destuffedData[VEBUS_FRAME_SIZE];
+    int destuffedLength = 0;
+    
+    // Skip MK3 header (4 bytes) and start destuffing
+    for (int i = 4; i < rxBufferPos - 1; i++) {  // -1 to skip end frame
+        uint8_t byte = rxBuffer[i];
+        
+        if (byte == VEBUS_MK3_STUFF_BYTE && i < rxBufferPos - 2) {
+            // Next byte contains stuffed data
+            i++;
+            uint8_t nextByte = rxBuffer[i];
+            if (nextByte >= 0x70 && nextByte <= 0x7F) {
+                // Unstuff: 0x70-0x7F -> 0xFA-0xFF
+                byte = 0xFA + (nextByte & 0x0F);
+            } else {
+                byte = nextByte + 0x80;
+            }
+        }
+        
+        if (destuffedLength < VEBUS_FRAME_SIZE) {
+            destuffedData[destuffedLength++] = byte;
+        }
+    }
+    
+    if (destuffedLength < 4) return false;  // Need at least address + command + flags + data
+    
+    // Parse MK3 frame structure
+    frame.address = destuffedData[0];
+    frame.command = destuffedData[1];
+    frame.length = destuffedLength - 4;  // Subtract address, command, flags, checksum
+    
+    // Copy data
+    uint8_t dataLength = min(frame.length, (uint8_t)VEBUS_MK3_MAX_DATA_SIZE);
+    memcpy(frame.data, &destuffedData[2], dataLength);
+    
+    // Checksum is the last byte before end frame
+    frame.checksum = destuffedData[destuffedLength - 1];
+    
+    return frame.isChecksumValid();
+}
+
 bool VeBusHandler::sendFrame(const VeBusFrame& frame) {
     if (serial == nullptr || !serial) {
         return false;
     }
     
-    // Send frame bytes
-    serial->write(frame.sync);
-    serial->write(frame.address);
-    serial->write(frame.command);
-    serial->write(frame.length);
+    if (frame.isMk3Frame) {
+        // MK3 Protocol sending - use correct format from reference implementation
+        return sendFrameMk3Correct(frame);
+    } else {
+        // MK2 Protocol sending (legacy)
+        // RS485: Switch to transmit mode
+        digitalWrite(VEBUS_DE_PIN, HIGH);
+        digitalWrite(VEBUS_SE_PIN, HIGH);
+        delayMicroseconds(50);
+        
+        serial->write(frame.sync);
+        serial->write(frame.address);
+        serial->write(frame.command);
+        serial->write(frame.length);
+        
+        for (int i = 0; i < frame.length && i < VEBUS_MK3_MAX_DATA_SIZE; i++) {
+            serial->write(frame.data[i]);
+        }
+        
+        serial->write(frame.checksum);
+        serial->flush();
+        
+        // RS485: Switch back to receive mode
+        delayMicroseconds(50);
+        digitalWrite(VEBUS_DE_PIN, LOW);
+        digitalWrite(VEBUS_SE_PIN, LOW);
+        
+        if (debugMode) {
+            Serial.printf("VeBus: Sent MK2 frame type 0x%02X, length %d\n", frame.command, frame.length);
+        }
+        return true;
+    }
+}
+
+bool VeBusHandler::sendFrameMk3Correct(const VeBusFrame& frame) {
+    // Use the correct MK3 format from reference implementation
+    uint8_t txBuffer[64];  // Buffer for command assembly
+    int txLength = 0;
     
-    for (int i = 0; i < frame.length && i < 28; i++) {
-        serial->write(frame.data[i]);
+    // Build MK3 frame according to reference implementation
+    txBuffer[txLength++] = VEBUS_MK3_HEADER1;     // 0x98
+    txBuffer[txLength++] = VEBUS_MK3_HEADER2;     // 0xF7
+    txBuffer[txLength++] = VEBUS_MK3_DATA_FRAME;  // 0xFE
+    txBuffer[txLength++] = frame.frameNumber;    // Frame number
+    
+    // Our own ID
+    txBuffer[txLength++] = 0x00;  // Our own ID high byte
+    txBuffer[txLength++] = 0xE6;  // Our own ID low byte
+    
+    // Command and flags
+    txBuffer[txLength++] = frame.command;  // Command
+    txBuffer[txLength++] = 0x02;           // Flags (RAM var, no EEPROM)
+    
+    // Add data from frame
+    for (int i = 0; i < frame.length && txLength < sizeof(txBuffer) - 3; i++) {
+        txBuffer[txLength++] = frame.data[i];
     }
     
-    serial->write(frame.checksum);
+    // Apply byte stuffing to the entire frame after header
+    uint8_t stuffedBuffer[128];
+    int stuffedLength = commandReplaceFAtoFF(stuffedBuffer, &txBuffer[4], txLength - 4);
+    
+    // Rebuild frame with stuffed data
+    uint8_t finalBuffer[128];
+    int finalLength = 0;
+    
+    // Copy header (first 4 bytes, no stuffing)
+    for (int i = 0; i < 4; i++) {
+        finalBuffer[finalLength++] = txBuffer[i];
+    }
+    
+    // Copy stuffed data
+    for (int i = 0; i < stuffedLength; i++) {
+        finalBuffer[finalLength++] = stuffedBuffer[i];
+    }
+    
+    // Calculate and append checksum
+    finalLength = appendChecksum(finalBuffer, finalLength);
+    
+    // RS485: Switch to transmit mode
+    digitalWrite(VEBUS_DE_PIN, HIGH);
+    digitalWrite(VEBUS_SE_PIN, HIGH);
+    delayMicroseconds(50);  // Small delay for transceiver switching
+    
+    // Send the frame
+    serial->write(finalBuffer, finalLength);
     serial->flush();
     
+    // RS485: Switch back to receive mode
+    delayMicroseconds(50);  // Allow last byte to be sent
+    digitalWrite(VEBUS_DE_PIN, LOW);
+    digitalWrite(VEBUS_SE_PIN, LOW);
+    
     if (debugMode) {
-        Serial.printf("VeBus: Sent frame type 0x%02X, length %d\n", frame.command, frame.length);
+        Serial.printf("VeBus: Sent MK3 frame type 0x%02X, original length %d, final length %d\n", 
+                     frame.command, frame.length, finalLength);
     }
     
     return true;
+}
+
+int VeBusHandler::commandReplaceFAtoFF(uint8_t *outbuf, const uint8_t *inbuf, int inlength) {
+    int j = 0;
+    
+    // Starting from the beginning, replace 0xFA..FF with double-byte character
+    for (int i = 0; i < inlength; i++) {
+        uint8_t c = inbuf[i];
+        if (c >= 0xFA) {
+            outbuf[j++] = VEBUS_MK3_STUFF_BYTE;
+            outbuf[j++] = 0x70 | (c & 0x0F);
+        } else {
+            outbuf[j++] = c;    // No replacement
+        }
+    }
+    return j;   // New length of output frame
+}
+
+int VeBusHandler::appendChecksum(uint8_t *buf, int inlength) {
+    int j = 0;
+    
+    // Calculate checksum starting from 3rd byte
+    uint8_t cs = 1;
+    for (int i = 2; i < inlength; i++) {
+        cs -= buf[i];
+    }
+    j = inlength;
+    if (cs >= 0xFB) {
+        // EXCEPTION: Only replace starting from 0xFB
+        buf[j++] = VEBUS_MK3_STUFF_BYTE;
+        buf[j++] = (cs - 0xFA);
+    } else {
+        buf[j++] = cs;
+    }
+    buf[j++] = VEBUS_MK3_END_FRAME;  // Append End Of Frame symbol
+    return j;   // New length of output frame
 }
 
 void VeBusHandler::processReceivedFrame(const VeBusFrame& frame) {
@@ -304,8 +546,19 @@ bool VeBusHandler::isFrameComplete() {
         return false; // Need at least header
     }
     
-    uint8_t expectedLength = 4 + rxBuffer[3] + 1; // Header + data + checksum
-    return rxBufferPos >= expectedLength;
+    // Check for MK3 frame (starts with 0x98 0xF7)
+    if (rxBuffer[0] == VEBUS_MK3_HEADER1 && rxBuffer[1] == VEBUS_MK3_HEADER2) {
+        // MK3 frame ends with 0xFF
+        return (rxBufferPos > 0 && rxBuffer[rxBufferPos - 1] == VEBUS_MK3_END_FRAME);
+    }
+    
+    // MK2 frame (starts with 0xFF)
+    if (rxBuffer[0] == VEBUS_SYNC_BYTE) {
+        uint8_t expectedLength = 4 + rxBuffer[3] + 1; // Header + data + checksum
+        return rxBufferPos >= expectedLength;
+    }
+    
+    return false; // Invalid frame type
 }
 
 void VeBusHandler::resetRxBuffer() {
