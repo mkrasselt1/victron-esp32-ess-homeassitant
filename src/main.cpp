@@ -27,6 +27,7 @@
 #include "pylontech_can.h"
 #include "external_api.h"
 #include "wifi_provisioning.h"
+#include "mqtt_minimal.h"
 
 // Global objects
 VeBusHandler veBusHandler;
@@ -36,6 +37,7 @@ AsyncWebServer webServer(80);
 AsyncWebSocket ws("/ws");
 ExternalAPI externalAPI(&webServer, &veBusHandler);
 SystemData systemData;
+MQTTMinimal mqttClient;
 
 // Timer and timing variables
 hw_timer_t* timer = nullptr;
@@ -382,6 +384,27 @@ void setupWebServer() {
                   feedInControlEnabled ? "true" : "false", targetFeedInPower, maxFeedInPower);
   });
   
+  // MQTT configuration endpoint (simplified)
+  webServer.on("/api/mqtt", HTTP_POST, [](AsyncWebServerRequest *request){
+    if (request->hasParam("server", true)) {
+      String server = request->getParam("server", true)->value();
+      int port = request->hasParam("port", true) ? request->getParam("port", true)->value().toInt() : 1883;
+      
+      mqttClient.begin(server, port);
+      request->send(200, "application/json", "{\"success\":true}");
+      
+      Serial.printf("MQTT configured: %s:%d\n", server.c_str(), port);
+    } else {
+      request->send(400, "application/json", "{\"error\":\"Missing server\"}");
+    }
+  });
+  
+  // MQTT status endpoint (simplified)
+  webServer.on("/api/mqtt", HTTP_GET, [](AsyncWebServerRequest *request){
+    String response = "{\"connected\":" + String(mqttClient.isConnected() ? "true" : "false") + "}";
+    request->send(200, "application/json", response);
+  });
+  
   // Fallback endpoint if SPIFFS file not found
   webServer.onNotFound([](AsyncWebServerRequest *request){
     if (request->url() == "/") {
@@ -424,6 +447,20 @@ void setupWebServer() {
   Serial.println("Web server started");
   Serial.print("IP: ");
   Serial.println(WiFi.localIP());
+  
+  // Setup MQTT
+  auto onMqttMessage = [](String topic, String payload) {
+    if (topic == "ess/feedin/enabled") {
+      feedInControlEnabled = (payload == "true" || payload == "1");
+    } else if (topic == "ess/feedin/target") {
+      targetFeedInPower = payload.toInt();
+    } else if (topic == "ess/feedin/max") {
+      maxFeedInPower = payload.toInt();
+    }
+  };
+  
+  mqttClient.setCallback(onMqttMessage);
+  mqttClient.begin("192.168.30.1", 1883);
 }
 
 void onTimer() {
@@ -501,6 +538,9 @@ void loop() {
   if (wifiProvisioning.isConnected()) {
     ArduinoOTA.handle();
     
+    // Handle MQTT
+    mqttClient.loop();
+    
     unsigned long currentTime = millis();
     
     // Handle timer events
@@ -524,15 +564,26 @@ void loop() {
       String wsData = createFullStatusJson();
       ws.textAll(wsData);
       
+      // Publish to MQTT
+      // MQTT publishing
+      mqttClient.publish("ess/battery/soc", String(systemData.battery.soc));
+      mqttClient.publish("ess/battery/voltage", String(systemData.battery.voltage, 2));
+      mqttClient.publish("ess/battery/power", String(systemData.battery.power, 1));
+      mqttClient.publish("ess/multiplus/power", String(systemData.multiplus.esspower, 1));
+      mqttClient.publish("ess/feedin/enabled", String(feedInControlEnabled ? "true" : "false"));
+      mqttClient.publish("ess/feedin/target", String(targetFeedInPower));
+      mqttClient.publish("ess/feedin/max", String(maxFeedInPower));
+      
       // Log current status
       Serial.printf("Battery: %.1fV, %.1fA, %dW, SOC:%d%% | ", 
                     systemData.battery.voltage, 
                     systemData.battery.current,
                     systemData.battery.power,
                     systemData.battery.soc);
-      Serial.printf("CAN: %s, VE.Bus: %s | ",
+      Serial.printf("CAN: %s, VE.Bus: %s, MQTT: %s | ",
                     pylontechCAN.isBatteryOnline() ? "Online" : "Offline",
-                    veBusHandler.isTaskRunning() ? "Running" : "Stopped");
+                    veBusHandler.isTaskRunning() ? "Running" : "Stopped",
+                    mqttClient.isConnected() ? "Connected" : "Disconnected");
       Serial.printf("WiFi: %s\r\n", WiFi.isConnected() ? "Connected" : "Disconnected");
     }
     
