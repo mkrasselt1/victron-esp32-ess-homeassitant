@@ -166,8 +166,6 @@ After initial setup, you can update firmware wirelessly:
 * **MQTT Integration**: Publish system data and subscribe to control commands
 * **Feed-in Power Control**: Automatic power feed-in regulation with configurable targets
 * **SPIFFS Storage**: Persistent configuration storage for MQTT settings
-* **LC Display**: 4x20 character LCD for local status display
-* **Optical Power Meter**: Integration with impulse-based electricity meters
 * **Battery Protection**: Advanced monitoring of battery protection and warning flags
 * **Memory Optimized**: Efficient code design for stable ESP32 operation
 

@@ -128,6 +128,8 @@ void onTimer();
 // Memory-efficient JSON creation for WebSocket updates
 void sendFullStatusToClient(AsyncWebSocketClient *client) {
   JsonDocument doc;
+  String wsJson;
+  wsJson.reserve(1024); // Larger buffer for all data
   
   // Battery data
   doc["battery_soc"] = systemData.battery.soc;
@@ -145,6 +147,9 @@ void sendFullStatusToClient(AsyncWebSocketClient *client) {
   doc["battery_warningFlags1"] = systemData.battery.warningFlags1;
   doc["battery_warningFlags2"] = systemData.battery.warningFlags2;
   doc["battery_requestFlags"] = systemData.battery.requestFlags;
+  serializeJson(doc, wsJson);
+  ws.textAll(wsJson);
+  doc.clear();
   
   // MultiPlus data
   doc["multiplusDcVoltage"] = systemData.multiplus.dcVoltage;
@@ -158,14 +163,18 @@ void sendFullStatusToClient(AsyncWebSocketClient *client) {
   doc["multiplusStatus80"] = systemData.multiplus.status80;
   doc["masterMultiLED_ActualInputCurrentLimit"] = systemData.multiplus.masterMultiLED_ActualInputCurrentLimit;
   doc["multiplusESSpower"] = systemData.multiplus.esspower;
+  serializeJson(doc, wsJson);
+  ws.textAll(wsJson);
+  doc.clear();
   
   // VE.Bus data
+  auto veBusStats = veBusHandler.getStatistics();
   doc["veBus_isOnline"] = veBusHandler.isTaskRunning();
-  doc["veBus_communicationQuality"] = 1.0; // Placeholder - could be calculated from error rates
-  doc["veBus_framesSent"] = 0; // Placeholder
-  doc["veBus_framesReceived"] = 0; // Placeholder
-  doc["veBus_checksumErrors"] = 0; // Placeholder
-  doc["veBus_timeoutErrors"] = 0; // Placeholder
+  doc["veBus_communicationQuality"] = veBusHandler.getCommunicationQuality();
+  doc["veBus_framesSent"] = veBusStats.framesSent;
+  doc["veBus_framesReceived"] = veBusStats.framesReceived;
+  doc["veBus_checksumErrors"] = veBusStats.checksumErrors;
+  doc["veBus_timeoutErrors"] = veBusStats.timeoutErrors;
   
   // ESS Control data
   doc["switchMode"] = systemData.essControl.switchMode;
@@ -173,6 +182,9 @@ void sendFullStatusToClient(AsyncWebSocketClient *client) {
   doc["secondsInMinStrategy"] = systemData.essControl.secondsInMinStrategy;
   doc["secondsInMaxStrategy"] = systemData.essControl.secondsInMaxStrategy;
   doc["bmsPowerAverage"] = systemData.battery.power; // Placeholder
+  serializeJson(doc, wsJson);
+  ws.textAll(wsJson);
+  doc.clear();
   
   // Feed-in control
   doc["feedInControl_enabled"] = feedInControlEnabled;
@@ -188,7 +200,9 @@ void sendFullStatusToClient(AsyncWebSocketClient *client) {
   doc["mqtt"]["server"] = mqttClient.mqttServer;
   doc["mqtt"]["port"] = mqttClient.mqttPort;
   
-  client->text(doc.as<String>());
+  serializeJson(doc, wsJson);
+  ws.textAll(wsJson);
+  doc.clear();
 }
 
 void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len) {
@@ -609,6 +623,8 @@ void loop() {
       // Send WebSocket update to all connected clients - comprehensive data
       if (ws.count() > 0) {
         JsonDocument wsDoc;
+        String wsJson;
+        wsJson.reserve(1024); // Larger buffer for all data
         
         // Battery data
         wsDoc["battery_soc"] = systemData.battery.soc;
@@ -621,7 +637,10 @@ void loop() {
         wsDoc["battery_chargeCurrentLimit"] = systemData.battery.chargeCurrentLimit;
         wsDoc["battery_dischargeCurrentLimit"] = systemData.battery.dischargeCurrentLimit;
         wsDoc["battery_manufacturer"] = systemData.battery.manufacturer;
-        
+        serializeJson(wsDoc, wsJson);
+        ws.textAll(wsJson);
+        wsDoc.clear();
+
         // MultiPlus data
         wsDoc["multiplusDcVoltage"] = systemData.multiplus.dcVoltage;
         wsDoc["multiplusDcCurrent"] = systemData.multiplus.dcCurrent;
@@ -634,42 +653,46 @@ void loop() {
         wsDoc["multiplusStatus80"] = systemData.multiplus.status80;
         wsDoc["masterMultiLED_ActualInputCurrentLimit"] = systemData.multiplus.masterMultiLED_ActualInputCurrentLimit;
         wsDoc["multiplusESSpower"] = systemData.multiplus.esspower;
-        
+        serializeJson(wsDoc, wsJson);
+        ws.textAll(wsJson);
+        wsDoc.clear();
+
         // VE.Bus data
+        auto veBusStats = veBusHandler.getStatistics();
         wsDoc["veBus_isOnline"] = veBusHandler.isTaskRunning();
-        wsDoc["veBus_communicationQuality"] = 1.0; // Placeholder
-        wsDoc["veBus_framesSent"] = 0; // Placeholder
-        wsDoc["veBus_framesReceived"] = 0; // Placeholder
-        wsDoc["veBus_checksumErrors"] = 0; // Placeholder
-        wsDoc["veBus_timeoutErrors"] = 0; // Placeholder
-        
+        wsDoc["veBus_communicationQuality"] = veBusHandler.getCommunicationQuality();
+        wsDoc["veBus_framesSent"] = veBusStats.framesSent;
+        wsDoc["veBus_framesReceived"] = veBusStats.framesReceived;
+        wsDoc["veBus_checksumErrors"] = veBusStats.checksumErrors;
+        wsDoc["veBus_timeoutErrors"] = veBusStats.timeoutErrors;
+        serializeJson(wsDoc, wsJson);
+        ws.textAll(wsJson);
+        wsDoc.clear();
+
         // ESS Control data
         wsDoc["switchMode"] = systemData.essControl.switchMode;
         wsDoc["essPowerStrategy"] = systemData.essControl.essStrategy;
         wsDoc["secondsInMinStrategy"] = systemData.essControl.secondsInMinStrategy;
         wsDoc["secondsInMaxStrategy"] = systemData.essControl.secondsInMaxStrategy;
         wsDoc["bmsPowerAverage"] = systemData.battery.power;
-        
+
         // Feed-in control
         wsDoc["feedInControl_enabled"] = feedInControlEnabled;
         wsDoc["feedInControl_current"] = systemData.multiplus.esspower;
         wsDoc["feedInControl_target"] = targetFeedInPower;
         wsDoc["feedInControl_max"] = maxFeedInPower;
-        
+
         // Status LED
         wsDoc["statusLED_mode"] = 3; // Normal operation
-        
+
         // MQTT status
         wsDoc["mqtt"]["connected"] = mqttClient.isConnected();
         wsDoc["mqtt"]["server"] = mqttClient.mqttServer;
         wsDoc["mqtt"]["port"] = mqttClient.mqttPort;
         
-        String wsJson;
-        wsJson.reserve(1024); // Larger buffer for all data
         serializeJson(wsDoc, wsJson);
-        serializeJson(doc, Serial);
-
         ws.textAll(wsJson);
+        wsDoc.clear();
       }
       
       // Publish to MQTT (string-free version)

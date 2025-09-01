@@ -135,7 +135,7 @@ struct ESSControlData {
     bool chargeOnly = false;                    // Charge only mode flag
     bool chargeFromACin = true;                 // Allow ACin charging
     int gridSetpoint = 0;                       // Power compensation offset
-    char switchMode = 'A';                      // Current switch mode
+    signed char switchMode = 'A';               // Current switch mode
     uint32_t socLastBalanced = 0;               // Time when battery was last balanced
     uint32_t secondsInMinStrategy = 0;          // Time in minimum strategy
     uint32_t secondsInMaxStrategy = 0;          // Time in maximum strategy
