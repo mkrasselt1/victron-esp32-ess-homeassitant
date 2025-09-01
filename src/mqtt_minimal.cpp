@@ -11,11 +11,14 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 MQTTMinimal::MQTTMinimal() : client(wifiClient), lastReconnect(0), mqttPort(1883) {
     mqttInstance = this;
     client.setCallback(mqttCallback);
+    mqttServer = "192.168.30.1"; // Default
 }
 
-void MQTTMinimal::begin(const String& server, int port) {
+void MQTTMinimal::begin(const String& server, int port, const String& username, const String& password) {
     mqttServer = server;
     mqttPort = port;
+    mqttUsername = username;
+    mqttPassword = password;
     client.setServer(server.c_str(), port);
 }
 
@@ -45,10 +48,18 @@ void MQTTMinimal::setCallback(std::function<void(String topic, String payload)> 
 }
 
 void MQTTMinimal::connect() {
-    if (WiFi.status() != WL_CONNECTED) return;
+    if (WiFi.status() != WL_CONNECTED || mqttServer.length() == 0) return;
     
-    String clientId = "ESP32ESS-" + String(WiFi.macAddress());
-    if (client.connect(clientId.c_str())) {
+    String clientId = "ESP32ESS";
+    bool connected = false;
+    
+    if (mqttUsername.length() > 0) {
+        connected = client.connect(clientId.c_str(), mqttUsername.c_str(), mqttPassword.c_str());
+    } else {
+        connected = client.connect(clientId.c_str());
+    }
+    
+    if (connected) {
         client.subscribe("ess/feedin/+");
     }
 }

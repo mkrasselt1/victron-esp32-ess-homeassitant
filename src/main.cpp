@@ -389,11 +389,13 @@ void setupWebServer() {
     if (request->hasParam("server", true)) {
       String server = request->getParam("server", true)->value();
       int port = request->hasParam("port", true) ? request->getParam("port", true)->value().toInt() : 1883;
+      String username = request->hasParam("username", true) ? request->getParam("username", true)->value() : "";
+      String password = request->hasParam("password", true) ? request->getParam("password", true)->value() : "";
       
-      mqttClient.begin(server, port);
+      mqttClient.begin(server, port, username, password);
       request->send(200, "application/json", "{\"success\":true}");
       
-      Serial.printf("MQTT configured: %s:%d\n", server.c_str(), port);
+      Serial.printf("MQTT configured: %s:%d (user: %s)\n", server.c_str(), port, username.c_str());
     } else {
       request->send(400, "application/json", "{\"error\":\"Missing server\"}");
     }
@@ -401,7 +403,9 @@ void setupWebServer() {
   
   // MQTT status endpoint (simplified)
   webServer.on("/api/mqtt", HTTP_GET, [](AsyncWebServerRequest *request){
-    String response = "{\"connected\":" + String(mqttClient.isConnected() ? "true" : "false") + "}";
+    String response = "{\"connected\":" + String(mqttClient.isConnected() ? "true" : "false") + 
+                     ",\"server\":\"" + mqttClient.mqttServer + 
+                     "\",\"port\":" + String(mqttClient.mqttPort) + "}";
     request->send(200, "application/json", response);
   });
   
@@ -460,7 +464,7 @@ void setupWebServer() {
   };
   
   mqttClient.setCallback(onMqttMessage);
-  mqttClient.begin("192.168.30.1", 1883);
+  // MQTT will auto-connect with saved credentials
 }
 
 void onTimer() {

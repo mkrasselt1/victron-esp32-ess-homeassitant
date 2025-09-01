@@ -225,6 +225,154 @@
             transform: scale(1.1);
         }
 
+        /* Modal Styles */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            animation: fadeIn 0.3s ease;
+        }
+
+        .modal-content {
+            background-color: white;
+            margin: 5% auto;
+            padding: 0;
+            border-radius: 12px;
+            width: 90%;
+            max-width: 500px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            animation: slideIn 0.3s ease;
+        }
+
+        .modal-header {
+            background: linear-gradient(135deg, var(--victron-blue), var(--victron-dark-blue));
+            color: white;
+            padding: 1.5rem;
+            border-radius: 12px 12px 0 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-header h2 {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            color: white;
+            font-size: 1.5rem;
+            cursor: pointer;
+            padding: 0;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.3s;
+        }
+
+        .modal-close:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .modal-body {
+            padding: 2rem;
+        }
+
+        .modal-form {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+
+        .modal-form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .modal-form-group label {
+            font-weight: 500;
+            color: var(--victron-dark-gray);
+        }
+
+        .modal-form-group input {
+            padding: 0.75rem;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 1rem;
+            transition: border-color 0.3s;
+        }
+
+        .modal-form-group input:focus {
+            outline: none;
+            border-color: var(--victron-blue);
+        }
+
+        .modal-form-group input::placeholder {
+            color: #999;
+        }
+
+        .modal-buttons {
+            display: flex;
+            gap: 1rem;
+            justify-content: flex-end;
+            margin-top: 1rem;
+        }
+
+        .modal-btn {
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: all 0.3s;
+            min-width: 100px;
+        }
+
+        .modal-btn-primary {
+            background: var(--victron-blue);
+            color: white;
+        }
+
+        .modal-btn-primary:hover {
+            background: var(--victron-dark-blue);
+        }
+
+        .modal-btn-secondary {
+            background: #f5f5f5;
+            color: var(--victron-dark-gray);
+        }
+
+        .modal-btn-secondary:hover {
+            background: #e0e0e0;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        @keyframes slideIn {
+            from { 
+                opacity: 0; 
+                transform: translateY(-50px) scale(0.95); 
+            }
+            to { 
+                opacity: 1; 
+                transform: translateY(0) scale(1); 
+            }
+        }
+
         @media (max-width: 1200px) {
             .wide-card {
                 grid-column: span 1;
@@ -470,6 +618,40 @@
             </div>
         </div>
 
+        <!-- MQTT Status Card -->
+        <div class="card">
+            <div class="card-header">
+                <div class="card-icon system-icon">📡</div>
+                <div class="card-title">MQTT-Integration</div>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Verbindungsstatus</span>
+                <span class="metric-value" id="mqtt_status">---</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Server</span>
+                <span class="metric-value" id="mqtt_server_display">---</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Port</span>
+                <span class="metric-value" id="mqtt_port_display">---</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Letzte Nachricht</span>
+                <span class="metric-value" id="mqtt_last_message">---</span>
+            </div>
+            <div style="margin-top: 1rem;">
+                <button onclick="openMqttModal()" style="padding: 0.75rem 1.5rem; background: var(--victron-blue); color: white; border: none; border-radius: 4px; font-size: 1rem; cursor: pointer; transition: background 0.3s; width: 100%;">
+                    MQTT konfigurieren
+                </button>
+            </div>
+            <div style="margin-top: 1rem; padding: 1rem; background: var(--victron-gray); border-radius: 8px; font-size: 0.85rem;">
+                <strong>MQTT Topics:</strong><br>
+                • Publishing: <code>ess/battery/soc</code>, <code>ess/multiplus/power</code><br>
+                • Subscribing: <code>ess/feedin/enabled</code>, <code>ess/feedin/target</code>
+            </div>
+        </div>
+
         <!-- Protection & Warnings Card -->
         <div class="card wide-card">
             <div class="card-header">
@@ -657,6 +839,16 @@
                 document.getElementById('feedin_max_input').value = Math.round(data.feedInControl_max || 5000);
             }
             
+            // MQTT Status (if available in data)
+            if (data.mqtt) {
+                const mqttConnected = data.mqtt.connected || false;
+                document.getElementById('mqtt_status').textContent = mqttConnected ? 'Verbunden' : 'Getrennt';
+                document.getElementById('mqtt_status').style.color = mqttConnected ? 'var(--victron-green)' : 'var(--victron-red)';
+                document.getElementById('mqtt_server').textContent = data.mqtt.server || '---';
+                document.getElementById('mqtt_port').textContent = data.mqtt.port || '---';
+                document.getElementById('mqtt_last_message').textContent = new Date().toLocaleTimeString();
+            }
+            
             // Protection & Warnings
             document.getElementById('battery_protection1').textContent = '0x' + (data.battery_protectionFlags1 ? data.battery_protectionFlags1.toString(16).toUpperCase() : '?');
             document.getElementById('battery_protection2').textContent = '0x' + (data.battery_protectionFlags2 ? data.battery_protectionFlags2.toString(16).toUpperCase() : '?');
@@ -710,6 +902,145 @@
             }
         }
         
+        // MQTT configuration form handler
+        document.getElementById('mqtt_form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const server = document.getElementById('mqtt_server_input').value.trim();
+            const port = parseInt(document.getElementById('mqtt_port_input').value) || 1883;
+            const username = document.getElementById('mqtt_username_input').value.trim();
+            const password = document.getElementById('mqtt_password_input').value;
+            
+            if (!server) {
+                alert('Bitte geben Sie einen MQTT-Server ein.');
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('server', server);
+            formData.append('port', port);
+            if (username) formData.append('username', username);
+            if (password) formData.append('password', password);
+            
+            fetch('/api/mqtt', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log('MQTT configuration updated:', data);
+                alert('MQTT-Konfiguration erfolgreich gespeichert. Verbindung wird hergestellt...');
+                // Reload MQTT status
+                loadMqttStatus();
+            })
+            .catch(error => {
+                console.error('Error updating MQTT configuration:', error);
+                alert('Fehler beim Aktualisieren der MQTT-Konfiguration: ' + error.message);
+            });
+        });
+        
+        // MQTT Configuration Modal Functions
+        function openMqttModal() {
+            document.getElementById('mqttModal').style.display = 'block';
+            loadMqttConfig();
+        }
+
+        function closeMqttModal() {
+            document.getElementById('mqttModal').style.display = 'none';
+        }
+
+        // Close modal when clicking outside
+        window.onclick = function(event) {
+            const modal = document.getElementById('mqttModal');
+            if (event.target === modal) {
+                closeMqttModal();
+            }
+        }
+
+        // Load current MQTT configuration into modal
+        function loadMqttConfig() {
+            fetch('/api/mqtt')
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('mqtt_server_input').value = data.server || '';
+                document.getElementById('mqtt_port_input').value = data.port || 1883;
+                document.getElementById('mqtt_username_input').value = data.username || '';
+                document.getElementById('mqtt_password_input').value = data.password || '';
+            })
+            .catch(error => {
+                console.error('Error loading MQTT config:', error);
+            });
+        }
+
+        // Handle MQTT modal form submission
+        document.getElementById('mqtt_modal_form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const mqttConfig = {
+                server: document.getElementById('mqtt_server_input').value.trim(),
+                port: parseInt(document.getElementById('mqtt_port_input').value),
+                username: document.getElementById('mqtt_username_input').value.trim(),
+                password: document.getElementById('mqtt_password_input').value.trim()
+            };
+
+            if (!mqttConfig.server) {
+                alert('Bitte geben Sie einen MQTT-Server an!');
+                return;
+            }
+
+            // Disable form during submission
+            const submitBtn = e.target.querySelector('button[type="submit"]');
+            const originalText = submitBtn.textContent;
+            submitBtn.textContent = '💾 Speichere...';
+            submitBtn.disabled = true;
+
+            fetch('/api/mqtt', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(mqttConfig)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('MQTT-Konfiguration erfolgreich gespeichert!');
+                    closeMqttModal();
+                    loadMqttStatus(); // Refresh status display
+                } else {
+                    alert('Fehler beim Speichern der MQTT-Konfiguration: ' + (data.error || 'Unbekannter Fehler'));
+                }
+            })
+            .catch(error => {
+                console.error('Error saving MQTT config:', error);
+                alert('Fehler beim Speichern der MQTT-Konfiguration: ' + error.message);
+            })
+            .finally(() => {
+                submitBtn.textContent = originalText;
+                submitBtn.disabled = false;
+            });
+        });
+        
+        // Load current MQTT status for display
+        function loadMqttStatus() {
+            fetch('/api/mqtt')
+            .then(response => response.json())
+            .then(data => {
+                const mqttConnected = data.connected || false;
+                document.getElementById('mqtt_status').textContent = mqttConnected ? 'Verbunden ✅' : 'Getrennt ❌';
+                document.getElementById('mqtt_server_display').textContent = data.server || 'Nicht konfiguriert';
+                document.getElementById('mqtt_port_display').textContent = data.port || '---';
+                document.getElementById('mqtt_last_message').textContent = data.lastMessage || 'Keine';
+            })
+            .catch(error => {
+                console.error('Error loading MQTT status:', error);
+                document.getElementById('mqtt_status').textContent = 'Fehler ❌';
+                document.getElementById('mqtt_server_display').textContent = 'Fehler beim Laden';
+                document.getElementById('mqtt_port_display').textContent = '---';
+                document.getElementById('mqtt_last_message').textContent = '---';
+            });
+        }
+        
         // Feed-in control form handler
         document.getElementById('feedin_form').addEventListener('submit', function(e) {
             e.preventDefault();
@@ -739,7 +1070,58 @@
         });
         
         // Auto-connect on page load
-        window.onload = connectWS;
+        window.onload = function() {
+            connectWS();
+            loadMqttStatus();
+        };
     </script>
+
+    <!-- MQTT Configuration Modal -->
+    <div id="mqttModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>📡 MQTT-Konfiguration</h2>
+                <button class="modal-close" onclick="closeMqttModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="mqtt_modal_form" class="modal-form">
+                    <div class="modal-form-group">
+                        <label for="mqtt_server_input">MQTT-Server *</label>
+                        <input type="text" id="mqtt_server_input" placeholder="192.168.30.1 oder mqtt.example.com" required>
+                    </div>
+                    
+                    <div class="modal-form-group">
+                        <label for="mqtt_port_input">Port</label>
+                        <input type="number" id="mqtt_port_input" min="1" max="65535" value="1883" required>
+                    </div>
+                    
+                    <div class="modal-form-group">
+                        <label for="mqtt_username_input">Benutzername (optional)</label>
+                        <input type="text" id="mqtt_username_input" placeholder="Leer lassen wenn nicht benötigt">
+                    </div>
+                    
+                    <div class="modal-form-group">
+                        <label for="mqtt_password_input">Passwort (optional)</label>
+                        <input type="password" id="mqtt_password_input" placeholder="Leer lassen wenn nicht benötigt">
+                    </div>
+                    
+                    <div style="background: var(--victron-gray); padding: 1rem; border-radius: 8px; font-size: 0.9rem; margin-top: 1rem;">
+                        <strong>📋 MQTT Topics:</strong><br>
+                        <strong>Publishing:</strong> <code>ess/battery/soc</code>, <code>ess/multiplus/power</code><br>
+                        <strong>Subscribing:</strong> <code>ess/feedin/enabled</code>, <code>ess/feedin/target</code>
+                    </div>
+                    
+                    <div class="modal-buttons">
+                        <button type="button" class="modal-btn modal-btn-secondary" onclick="closeMqttModal()">
+                            Abbrechen
+                        </button>
+                        <button type="submit" class="modal-btn modal-btn-primary">
+                            💾 Speichern
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
 </body>
 </html>
