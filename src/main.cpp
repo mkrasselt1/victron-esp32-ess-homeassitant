@@ -129,17 +129,66 @@ void onTimer();
 void sendFullStatusToClient(AsyncWebSocketClient *client) {
   JsonDocument doc;
   
-  // Essential data only
-  doc["soc"] = systemData.battery.soc;
-  doc["voltage"] = systemData.battery.voltage;
-  doc["power"] = systemData.battery.power;
-  doc["enabled"] = feedInControlEnabled;
-  doc["target"] = targetFeedInPower;
+  // Battery data
+  doc["battery_soc"] = systemData.battery.soc;
+  doc["battery_voltage"] = systemData.battery.voltage;
+  doc["battery_current"] = systemData.battery.current;
+  doc["battery_power"] = systemData.battery.power;
+  doc["battery_temperature"] = systemData.battery.temperature;
+  doc["battery_soh"] = systemData.battery.soh;
+  doc["battery_chargeVoltage"] = systemData.battery.chargeVoltage;
+  doc["battery_chargeCurrentLimit"] = systemData.battery.chargeCurrentLimit;
+  doc["battery_dischargeCurrentLimit"] = systemData.battery.dischargeCurrentLimit;
+  doc["battery_manufacturer"] = systemData.battery.manufacturer;
+  doc["battery_protectionFlags1"] = systemData.battery.protectionFlags1;
+  doc["battery_protectionFlags2"] = systemData.battery.protectionFlags2;
+  doc["battery_warningFlags1"] = systemData.battery.warningFlags1;
+  doc["battery_warningFlags2"] = systemData.battery.warningFlags2;
+  doc["battery_requestFlags"] = systemData.battery.requestFlags;
   
-  String json;
-  json.reserve(80); // Pre-allocate small buffer
-  serializeJson(doc, json);
-  client->text(json);
+  // MultiPlus data
+  doc["multiplusDcVoltage"] = systemData.multiplus.dcVoltage;
+  doc["multiplusDcCurrent"] = systemData.multiplus.dcCurrent;
+  doc["multiplusUMainsRMS"] = systemData.multiplus.uMainsRMS;
+  doc["multiplusAcFrequency"] = systemData.multiplus.acFrequency;
+  doc["multiplusPinverterFiltered"] = systemData.multiplus.pinverterFiltered;
+  doc["multiplusPmainsFiltered"] = systemData.multiplus.pmainsFiltered;
+  doc["multiplusPowerFactor"] = systemData.multiplus.powerFactor;
+  doc["multiplusTemp"] = systemData.multiplus.temp;
+  doc["multiplusStatus80"] = systemData.multiplus.status80;
+  doc["masterMultiLED_ActualInputCurrentLimit"] = systemData.multiplus.masterMultiLED_ActualInputCurrentLimit;
+  doc["multiplusESSpower"] = systemData.multiplus.esspower;
+  
+  // VE.Bus data
+  doc["veBus_isOnline"] = veBusHandler.isTaskRunning();
+  doc["veBus_communicationQuality"] = 1.0; // Placeholder - could be calculated from error rates
+  doc["veBus_framesSent"] = 0; // Placeholder
+  doc["veBus_framesReceived"] = 0; // Placeholder
+  doc["veBus_checksumErrors"] = 0; // Placeholder
+  doc["veBus_timeoutErrors"] = 0; // Placeholder
+  
+  // ESS Control data
+  doc["switchMode"] = systemData.essControl.switchMode;
+  doc["essPowerStrategy"] = systemData.essControl.essStrategy;
+  doc["secondsInMinStrategy"] = systemData.essControl.secondsInMinStrategy;
+  doc["secondsInMaxStrategy"] = systemData.essControl.secondsInMaxStrategy;
+  doc["bmsPowerAverage"] = systemData.battery.power; // Placeholder
+  
+  // Feed-in control
+  doc["feedInControl_enabled"] = feedInControlEnabled;
+  doc["feedInControl_current"] = systemData.multiplus.esspower;
+  doc["feedInControl_target"] = targetFeedInPower;
+  doc["feedInControl_max"] = maxFeedInPower;
+  
+  // Status LED
+  doc["statusLED_mode"] = 3; // Normal operation
+  
+  // MQTT status
+  doc["mqtt"]["connected"] = mqttClient.isConnected();
+  doc["mqtt"]["server"] = mqttClient.mqttServer;
+  doc["mqtt"]["port"] = mqttClient.mqttPort;
+  
+  client->text(doc.as<String>());
 }
 
 void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len) {
@@ -557,17 +606,69 @@ void loop() {
     if (currentTime - lastStatusUpdate >= STATUS_UPDATE_INTERVAL) {
       lastStatusUpdate = currentTime;
       
-      // Send WebSocket update to all connected clients - minimal JSON
+      // Send WebSocket update to all connected clients - comprehensive data
       if (ws.count() > 0) {
+        JsonDocument wsDoc;
+        
+        // Battery data
+        wsDoc["battery_soc"] = systemData.battery.soc;
+        wsDoc["battery_voltage"] = systemData.battery.voltage;
+        wsDoc["battery_current"] = systemData.battery.current;
+        wsDoc["battery_power"] = systemData.battery.power;
+        wsDoc["battery_temperature"] = systemData.battery.temperature;
+        wsDoc["battery_soh"] = systemData.battery.soh;
+        wsDoc["battery_chargeVoltage"] = systemData.battery.chargeVoltage;
+        wsDoc["battery_chargeCurrentLimit"] = systemData.battery.chargeCurrentLimit;
+        wsDoc["battery_dischargeCurrentLimit"] = systemData.battery.dischargeCurrentLimit;
+        wsDoc["battery_manufacturer"] = systemData.battery.manufacturer;
+        
+        // MultiPlus data
+        wsDoc["multiplusDcVoltage"] = systemData.multiplus.dcVoltage;
+        wsDoc["multiplusDcCurrent"] = systemData.multiplus.dcCurrent;
+        wsDoc["multiplusUMainsRMS"] = systemData.multiplus.uMainsRMS;
+        wsDoc["multiplusAcFrequency"] = systemData.multiplus.acFrequency;
+        wsDoc["multiplusPinverterFiltered"] = systemData.multiplus.pinverterFiltered;
+        wsDoc["multiplusPmainsFiltered"] = systemData.multiplus.pmainsFiltered;
+        wsDoc["multiplusPowerFactor"] = systemData.multiplus.powerFactor;
+        wsDoc["multiplusTemp"] = systemData.multiplus.temp;
+        wsDoc["multiplusStatus80"] = systemData.multiplus.status80;
+        wsDoc["masterMultiLED_ActualInputCurrentLimit"] = systemData.multiplus.masterMultiLED_ActualInputCurrentLimit;
+        wsDoc["multiplusESSpower"] = systemData.multiplus.esspower;
+        
+        // VE.Bus data
+        wsDoc["veBus_isOnline"] = veBusHandler.isTaskRunning();
+        wsDoc["veBus_communicationQuality"] = 1.0; // Placeholder
+        wsDoc["veBus_framesSent"] = 0; // Placeholder
+        wsDoc["veBus_framesReceived"] = 0; // Placeholder
+        wsDoc["veBus_checksumErrors"] = 0; // Placeholder
+        wsDoc["veBus_timeoutErrors"] = 0; // Placeholder
+        
+        // ESS Control data
+        wsDoc["switchMode"] = systemData.essControl.switchMode;
+        wsDoc["essPowerStrategy"] = systemData.essControl.essStrategy;
+        wsDoc["secondsInMinStrategy"] = systemData.essControl.secondsInMinStrategy;
+        wsDoc["secondsInMaxStrategy"] = systemData.essControl.secondsInMaxStrategy;
+        wsDoc["bmsPowerAverage"] = systemData.battery.power;
+        
+        // Feed-in control
+        wsDoc["feedInControl_enabled"] = feedInControlEnabled;
+        wsDoc["feedInControl_current"] = systemData.multiplus.esspower;
+        wsDoc["feedInControl_target"] = targetFeedInPower;
+        wsDoc["feedInControl_max"] = maxFeedInPower;
+        
+        // Status LED
+        wsDoc["statusLED_mode"] = 3; // Normal operation
+        
+        // MQTT status
+        wsDoc["mqtt"]["connected"] = mqttClient.isConnected();
+        wsDoc["mqtt"]["server"] = mqttClient.mqttServer;
+        wsDoc["mqtt"]["port"] = mqttClient.mqttPort;
+        
         String wsJson;
-        wsJson.reserve(60); // Small pre-allocation
-        wsJson = "{\"soc\":";
-        wsJson += systemData.battery.soc;
-        wsJson += ",\"power\":";
-        wsJson += systemData.battery.power;
-        wsJson += ",\"enabled\":";
-        wsJson += (feedInControlEnabled ? "true" : "false");
-        wsJson += "}";
+        wsJson.reserve(1024); // Larger buffer for all data
+        serializeJson(wsDoc, wsJson);
+        serializeJson(doc, Serial);
+
         ws.textAll(wsJson);
       }
       

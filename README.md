@@ -1,19 +1,23 @@
-# Victron Multiplus 2 ESS using LilyGO T-CAN485 controlling VE.Bus
+# Victron Multiplus 2 ESS using ESP32-DevKitC V4 controlling VE.Bus
 
 Implements an ESS system with Victron Multiplus II and Pylontech batteries.
-The Multiplus is directly controlled via VE.Bus using the LilyGO T-CAN485 board,
+The Multiplus is directly controlled via VE.Bus using a custom ESP32 board,
 which features built-in CAN and RS485 transceivers.
 
 ![ESP32ESS hardware photo](docs/esp32ess_control_board.jpg)
 
 ## Hardware Requirements
 
-- **LilyGO T-CAN485 Board** (ESP32-WROOM-32 based)
-  - Built-in CAN transceiver (SN65HVD230)
-  - Built-in RS485 transceiver (SP3485)
+- **Custom ESP32 Board based on ESP32-DevKitC V4**
+  - ESP32-WROOM-32D microcontroller
+  - MAX485 RS485 transceiver for VE.Bus communication
+  - SN65HVD230 CAN bus transceiver for battery communication
+  - LC Display 4x20 HD44780 for status display
+  - Optical impulse receiver for power meter integration
+  - DC-DC step-down regulator (7-12V to 5V) for power supply
+  - RJ45 connectors for VE.Bus and CAN bus
   - WiFi & Bluetooth support
   - USB programming
-  - GitHub: https://github.com/Xinyuan-LilyGO/T-CAN485
 
 ## Pin Configuration (LilyGO T-CAN485)
 
@@ -76,10 +80,13 @@ managed through PlatformIO's library dependency system.
 
 ### Hardware Setup
 
-1. **LilyGO T-CAN485 Board**: No additional hardware required for CAN and RS485 communication
-2. **Pylontech Battery Connection**: Connect CAN+ and CAN- to the battery's CAN bus
-3. **Victron Multiplus Connection**: Connect RS485 A/B to VE.Bus terminals
-3. **Power Supply**: Use USB for programming and external 5V for operation
+1. **Custom ESP32 Board**: Based on ESP32-DevKitC V4 with integrated transceivers
+2. **Pylontech Battery Connection**: Connect CAN+ and CAN- to the battery's CAN bus (RJ45)
+3. **Victron Multiplus Connection**: Connect RS485 A/B to VE.Bus terminals (RJ45)
+4. **Power Supply**: 7-12V input via DC-DC regulator from Multiplus VE.Bus (max. 700mW)
+5. **LC Display**: Connect 4x20 HD44780 display for local monitoring
+6. **Optical Sensor**: Mount IR receiver in front of electricity meter for consumption monitoring
+7. **Status LED**: Connect WS2812 LED for power flow visualization
 
 ### Software Installation
 
@@ -107,6 +114,19 @@ The device uses WiFiManager for easy WiFi setup:
 3. Open browser and navigate to 192.168.4.1
 4. Select your WiFi network and enter credentials
 5. Device will connect and remember the settings
+
+### MQTT Configuration
+
+After WiFi setup, configure MQTT for remote monitoring and control:
+
+1. Access the web interface at the device IP
+2. Click "MQTT konfigurieren" in the MQTT Status card
+3. Enter your MQTT broker details (server, port, credentials)
+4. The device will publish system data and accept control commands
+
+**MQTT Topics:**
+- **Publishing:** `ess/battery/soc`, `ess/battery/voltage`, `ess/battery/power`, `ess/multiplus/power`, `ess/feedin/enabled`, `ess/feedin/target`
+- **Subscribing:** `ess/feedin/enabled`, `ess/feedin/target`, `ess/feedin/max`
 
 ### Over-The-Air (OTA) Updates
 
@@ -142,7 +162,14 @@ After initial setup, you can update firmware wirelessly:
 * **VE.Bus**: Separate task for Victron Multiplus control
 * **Status LED**: WS2812 LED with power flow visualization
 * **Web API**: REST API for system monitoring and control
-* **Real-time Monitoring**: Live system status via web interface
+* **Real-time Monitoring**: Live system status via web interface with WebSocket updates
+* **MQTT Integration**: Publish system data and subscribe to control commands
+* **Feed-in Power Control**: Automatic power feed-in regulation with configurable targets
+* **SPIFFS Storage**: Persistent configuration storage for MQTT settings
+* **LC Display**: 4x20 character LCD for local status display
+* **Optical Power Meter**: Integration with impulse-based electricity meters
+* **Battery Protection**: Advanced monitoring of battery protection and warning flags
+* **Memory Optimized**: Efficient code design for stable ESP32 operation
 
 ## Authors
 
@@ -152,8 +179,18 @@ Baxi (pv-baxi@gmx.de)
 
 ## Version History
 
+* 1.0
+    * Complete hardware redesign with custom ESP32-DevKitC V4 board
+    * Added MQTT integration with web-based configuration
+    * Implemented feed-in power control system
+    * Added WebSocket support for real-time updates
+    * Integrated LC display for local monitoring
+    * Added optical power meter interface
+    * Enhanced web interface with comprehensive system metrics
+    * Memory optimization for stable ESP32 operation
+    * SPIFFS-based configuration persistence
 * 0.1
-    * Initial Release
+    * Initial Release with LilyGO T-CAN485 board
 
 ## License
 
@@ -172,4 +209,7 @@ This project is licensed under the GNU General Public License v3.0 or later - se
 * [Hadmut] (https://www.mikrocontroller.net/topic/561834)
 * [SWeigert] (http://www.stefan-weigert.de/php_loader/sml.php)
 * [SDraeger] (https://draeger-it.blog/zutrittskontrolle-mit-nummernfeld-esp32-und-shelly/)
+* [ESPAsyncWebServer] (https://github.com/me-no-dev/ESPAsyncWebServer)
+* [ArduinoJson] (https://github.com/bblanchon/ArduinoJson)
+* [PubSubClient] (https://github.com/knolleary/pubsubclient)
 
