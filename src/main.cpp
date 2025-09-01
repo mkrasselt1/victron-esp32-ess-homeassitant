@@ -21,6 +21,7 @@
 #include <WiFiUdp.h>
 #include <ArduinoOTA.h>
 #include <SPIFFS.h>
+#include <ArduinoJson.h>
 #include "system_data.h"
 #include "vebus_handler.h"
 #include "status_led.h"
@@ -52,10 +53,71 @@ float targetFeedInPower = 0.0;  // Target feed-in power in watts
 float maxFeedInPower = 5000.0;  // Maximum allowed feed-in power in watts
 bool feedInControlEnabled = false;  // Enable/disable feed-in control
 
+// SPIFFS configuration functions for MQTT persistence
+void loadConfigFromSPIFFS() {
+  if (!SPIFFS.exists("/mqtt_config.json")) {
+    Serial.println("MQTT config file does not exist");
+    return;
+  }
+  
+  File file = SPIFFS.open("/mqtt_config.json", "r");
+  if (!file) {
+    Serial.println("Failed to open MQTT config file");
+    return;
+  }
+  
+  JsonDocument doc;
+  DeserializationError error = deserializeJson(doc, file);
+  file.close();
+  
+  if (error) {
+    Serial.print("Failed to parse MQTT config: ");
+    Serial.println(error.c_str());
+    return;
+  }
+  
+  // Load configuration into MQTTMinimal
+  if (doc["server"].is<const char*>()) {
+    strncpy(mqttClient.mqttServer, doc["server"], sizeof(mqttClient.mqttServer) - 1);
+    mqttClient.mqttServer[sizeof(mqttClient.mqttServer) - 1] = '\0';
+  }
+  if (doc["port"].is<int>()) {
+    mqttClient.mqttPort = doc["port"];
+  }
+  if (doc["username"].is<const char*>()) {
+    strncpy(mqttClient.mqttUsername, doc["username"], sizeof(mqttClient.mqttUsername) - 1);
+    mqttClient.mqttUsername[sizeof(mqttClient.mqttUsername) - 1] = '\0';
+  }
+  if (doc["password"].is<const char*>()) {
+    strncpy(mqttClient.mqttPassword, doc["password"], sizeof(mqttClient.mqttPassword) - 1);
+    mqttClient.mqttPassword[sizeof(mqttClient.mqttPassword) - 1] = '\0';
+  }
+  
+  Serial.println("MQTT configuration loaded from SPIFFS");
+}
+
+void saveConfigToSPIFFS() {
+  JsonDocument doc;
+  doc["server"] = mqttClient.mqttServer;
+  doc["port"] = mqttClient.mqttPort;
+  doc["username"] = mqttClient.mqttUsername;
+  doc["password"] = mqttClient.mqttPassword;
+  
+  File file = SPIFFS.open("/mqtt_config.json", "w");
+  if (!file) {
+    Serial.println("Failed to open MQTT config file for writing");
+    return;
+  }
+  
+  if (serializeJson(doc, file) == 0) {
+    Serial.println("Failed to write MQTT config to SPIFFS");
+  } else {
+    Serial.println("MQTT configuration saved to SPIFFS");
+  }
+  file.close();
+}
+
 // Function prototypes
-String createBatteryJson();
-String createMultiplusJson();
-String createLedJson();
 void updateStatusLED();
 void processTimerEvents();
 void setupWebServer();
@@ -63,139 +125,27 @@ void setupOTA();
 void setupWiFiManager();
 void onTimer();
 
-// JSON creation functions
-String createBatteryJson() {
+// Memory-efficient JSON creation for WebSocket updates
+void sendFullStatusToClient(AsyncWebSocketClient *client) {
   JsonDocument doc;
   
-  doc["voltage"] = systemData.battery.voltage;
-  doc["current"] = systemData.battery.current;
-  doc["power"] = systemData.battery.power;
+  // Essential data only
   doc["soc"] = systemData.battery.soc;
-  doc["socMax"] = systemData.battery.socMax;
-  doc["temperature"] = systemData.battery.temperature;
-  doc["chargeCurrentLimit"] = systemData.battery.chargeCurrentLimit;
-  doc["dischargeCurrentLimit"] = systemData.battery.dischargeCurrentLimit;
-  doc["warningFlags1"] = systemData.battery.warningFlags1;
-  doc["warningFlags2"] = systemData.battery.warningFlags2;
-  doc["protectionFlags1"] = systemData.battery.protectionFlags1;
-  doc["protectionFlags2"] = systemData.battery.protectionFlags2;
+  doc["voltage"] = systemData.battery.voltage;
+  doc["power"] = systemData.battery.power;
+  doc["enabled"] = feedInControlEnabled;
+  doc["target"] = targetFeedInPower;
   
-  String output;
-  serializeJson(doc, output);
-  return output;
-}
-
-String createMultiplusJson() {
-  JsonDocument doc;
-  
-  doc["acPhase"] = systemData.multiplus.acPhase;
-  doc["dcVoltage"] = systemData.multiplus.dcVoltage;
-  doc["dcCurrent"] = systemData.multiplus.dcCurrent;
-  doc["esspower"] = systemData.multiplus.esspower;
-  doc["acFrequency"] = systemData.multiplus.acFrequency;
-  doc["uMainsRMS"] = systemData.multiplus.uMainsRMS;
-  doc["temp"] = systemData.multiplus.temp;
-  doc["status80"] = systemData.multiplus.status80;
-  doc["voltageStatus"] = systemData.multiplus.voltageStatus;
-  doc["emergencyPowerStatus"] = systemData.multiplus.emergencyPowerStatus;
-  
-  String output;
-  serializeJson(doc, output);
-  return output;
-}
-
-String createLedJson() {
-  JsonDocument doc;
-  
-  doc["enabled"] = true;
-  doc["brightness"] = 50; // Default brightness
-  doc["powerFlow"] = systemData.battery.power;
-  doc["mode"] = (int)statusLED.getCurrentMode();
-  doc["direction"] = (int)statusLED.getCurrentDirection();
-  
-  String output;
-  serializeJson(doc, output);
-  return output;
-}
-
-String createFullStatusJson() {
-  JsonDocument doc;
-  
-  // Battery data
-  doc["battery_soc"] = systemData.battery.soc;
-  doc["battery_voltage"] = systemData.battery.voltage;
-  doc["battery_current"] = systemData.battery.current;
-  doc["battery_power"] = systemData.battery.power;
-  doc["battery_temperature"] = systemData.battery.temperature;
-  doc["battery_soh"] = systemData.battery.soh;
-  doc["battery_chargeVoltage"] = systemData.battery.chargeVoltage;
-  doc["battery_chargeCurrentLimit"] = systemData.battery.chargeCurrentLimit;
-  doc["battery_dischargeCurrentLimit"] = systemData.battery.dischargeCurrentLimit;
-  doc["battery_dischargeVoltage"] = systemData.battery.dischargeVoltage;
-  doc["battery_manufacturer"] = systemData.battery.manufacturer;
-  doc["battery_nrPacksInParallel"] = systemData.battery.nrPacksInParallel;
-  doc["battery_protectionFlags1"] = systemData.battery.protectionFlags1;
-  doc["battery_protectionFlags2"] = systemData.battery.protectionFlags2;
-  doc["battery_warningFlags1"] = systemData.battery.warningFlags1;
-  doc["battery_warningFlags2"] = systemData.battery.warningFlags2;
-  doc["battery_requestFlags"] = systemData.battery.requestFlags;
-  
-  // MultiPlus data
-  doc["multiplusDcVoltage"] = systemData.multiplus.dcVoltage;
-  doc["multiplusDcCurrent"] = systemData.multiplus.dcCurrent;
-  doc["multiplusESSpower"] = systemData.multiplus.esspower;
-  doc["multiplusAcFrequency"] = systemData.multiplus.acFrequency;
-  doc["multiplusUMainsRMS"] = systemData.multiplus.uMainsRMS;
-  doc["multiplusTemp"] = systemData.multiplus.temp;
-  doc["multiplusStatus80"] = systemData.multiplus.status80;
-  doc["multiplusVoltageStatus"] = systemData.multiplus.voltageStatus;
-  doc["multiplusEmergencyPowerStatus"] = systemData.multiplus.emergencyPowerStatus;
-  doc["multiplusPinverterFiltered"] = systemData.multiplus.esspower; // Approximation
-  doc["multiplusPmainsFiltered"] = 0; // Not available
-  doc["multiplusPowerFactor"] = 1.0; // Default
-  doc["masterMultiLED_ActualInputCurrentLimit"] = 16.0; // Default
-  
-  // VE.Bus communication stats (simplified for available methods)
-  doc["veBus_isOnline"] = veBusHandler.isTaskRunning();
-  doc["veBus_communicationQuality"] = veBusHandler.getCommunicationQuality();
-  doc["veBus_framesSent"] = 0; // Not available
-  doc["veBus_framesReceived"] = 0; // Not available  
-  doc["veBus_checksumErrors"] = 0; // Not available
-  doc["veBus_timeoutErrors"] = 0; // Not available
-  
-  // Status LED data
-  doc["statusLED_mode"] = (int)statusLED.getCurrentMode();
-  doc["statusLED_direction"] = (int)statusLED.getCurrentDirection();
-  doc["statusLED_initialized"] = true;
-  
-  // System status
-  doc["switchMode"] = "Auto";
-  doc["essPowerStrategy"] = "Optimized";
-  doc["minimumFeedIn"] = 0;
-  doc["averageControlDeviationFeedIn"] = 0;
-  doc["averageChargingPower"] = 0;
-  doc["bmsPowerAverage"] = systemData.battery.power;
-  doc["powerTrendConsumption"] = 0;
-  doc["powerTrendFeedIn"] = 0;
-  doc["secondsInMinStrategy"] = 0;
-  doc["secondsInMaxStrategy"] = 0;
-  
-  // Feed-in power control
-  doc["feedInControl_enabled"] = feedInControlEnabled;
-  doc["feedInControl_target"] = targetFeedInPower;
-  doc["feedInControl_max"] = maxFeedInPower;
-  doc["feedInControl_current"] = systemData.multiplus.esspower; // Current AC power output
-  
-  String output;
-  serializeJson(doc, output);
-  return output;
+  String json;
+  json.reserve(80); // Pre-allocate small buffer
+  serializeJson(doc, json);
+  client->text(json);
 }
 
 void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len) {
   if (type == WS_EVT_CONNECT) {
     Serial.printf("WebSocket client #%u connected from %s\n", client->id(), client->remoteIP().toString().c_str());
-    // Send initial data to new client
-    client->text(createFullStatusJson());
+    sendFullStatusToClient(client);
   } else if (type == WS_EVT_DISCONNECT) {
     Serial.printf("WebSocket client #%u disconnected\n", client->id());
   }
@@ -369,44 +319,77 @@ void setupWebServer() {
       if (maxFeedInPower > 10000) maxFeedInPower = 10000;
     }
     
-    // Send response with current settings
-    JsonDocument response;
-    response["enabled"] = feedInControlEnabled;
-    response["target"] = targetFeedInPower;
-    response["max"] = maxFeedInPower;
-    response["current"] = systemData.multiplus.esspower;
+    // Send response with current settings (memory-efficient)
+    char jsonResponse[128];
+    snprintf(jsonResponse, sizeof(jsonResponse), 
+             "{\"enabled\":%s,\"target\":%.1f,\"max\":%.1f,\"current\":%.1f}",
+             feedInControlEnabled ? "true" : "false",
+             targetFeedInPower,
+             maxFeedInPower,
+             systemData.multiplus.esspower);
     
-    String output;
-    serializeJson(response, output);
-    request->send(200, "application/json", output);
+    request->send(200, "application/json", jsonResponse);
     
     Serial.printf("Feed-in control updated: enabled=%s, target=%.1fW, max=%.1fW\n", 
                   feedInControlEnabled ? "true" : "false", targetFeedInPower, maxFeedInPower);
   });
   
-  // MQTT configuration endpoint (simplified)
-  webServer.on("/api/mqtt", HTTP_POST, [](AsyncWebServerRequest *request){
-    if (request->hasParam("server", true)) {
-      String server = request->getParam("server", true)->value();
-      int port = request->hasParam("port", true) ? request->getParam("port", true)->value().toInt() : 1883;
-      String username = request->hasParam("username", true) ? request->getParam("username", true)->value() : "";
-      String password = request->hasParam("password", true) ? request->getParam("password", true)->value() : "";
+  // MQTT configuration endpoint (JSON support)
+  webServer.on("/api/mqtt", HTTP_POST, [](AsyncWebServerRequest *request){}, NULL, 
+    [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total){
+    JsonDocument doc;
+    if (deserializeJson(doc, (char*)data) == DeserializationError::Ok) {
+      const char* server = doc["server"] | "";
+      int port = doc["port"] | 1883;
+      const char* username = doc["username"] | "";
+      const char* password = doc["password"] | "";
       
-      mqttClient.begin(server, port, username, password);
-      request->send(200, "application/json", "{\"success\":true}");
-      
-      Serial.printf("MQTT configured: %s:%d (user: %s)\n", server.c_str(), port, username.c_str());
+      if (strlen(server) > 0) {
+        mqttClient.begin(server, port, username, password);
+        saveConfigToSPIFFS();  // Save configuration to SPIFFS
+        request->send(200, "application/json", "{\"success\":true}");
+        Serial.printf("MQTT configured: %s:%d (user: %s)\n", server, port, username);
+      } else {
+        request->send(400, "application/json", "{\"error\":\"Missing server\"}");
+      }
     } else {
-      request->send(400, "application/json", "{\"error\":\"Missing server\"}");
+      request->send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
     }
   });
   
-  // MQTT status endpoint (simplified)
+  // MQTT status endpoint (with configuration data)
   webServer.on("/api/mqtt", HTTP_GET, [](AsyncWebServerRequest *request){
-    String response = "{\"connected\":" + String(mqttClient.isConnected() ? "true" : "false") + 
-                     ",\"server\":\"" + mqttClient.mqttServer + 
-                     "\",\"port\":" + String(mqttClient.mqttPort) + "}";
+    char response[256];
+    snprintf(response, sizeof(response), 
+             "{\"connected\":%s,\"server\":\"%s\",\"port\":%d,\"username\":\"%s\",\"password\":\"\",\"lastMessage\":\"N/A\"}", 
+             mqttClient.isConnected() ? "true" : "false",
+             strlen(mqttClient.mqttServer) > 0 ? mqttClient.mqttServer : "",
+             mqttClient.mqttPort > 0 ? mqttClient.mqttPort : 1883,
+             strlen(mqttClient.mqttUsername) > 0 ? mqttClient.mqttUsername : "");
+    
     request->send(200, "application/json", response);
+    
+    Serial.printf("MQTT status requested: connected=%s, server=%s, port=%d\n", 
+                  mqttClient.isConnected() ? "true" : "false", 
+                  mqttClient.mqttServer, 
+                  mqttClient.mqttPort);
+  });
+  
+  // Serve static CSS and JS files from SPIFFS
+  webServer.on("/styles.css", HTTP_GET, [](AsyncWebServerRequest *request){
+    if (SPIFFS.exists("/styles.css")) {
+      request->send(SPIFFS, "/styles.css", "text/css");
+    } else {
+      request->send(404, "text/plain", "styles.css not found");
+    }
+  });
+  
+  webServer.on("/script.js", HTTP_GET, [](AsyncWebServerRequest *request){
+    if (SPIFFS.exists("/script.js")) {
+      request->send(SPIFFS, "/script.js", "application/javascript");
+    } else {
+      request->send(404, "text/plain", "script.js not found");
+    }
   });
   
   // Fallback endpoint if SPIFFS file not found
@@ -453,13 +436,13 @@ void setupWebServer() {
   Serial.println(WiFi.localIP());
   
   // Setup MQTT
-  auto onMqttMessage = [](String topic, String payload) {
-    if (topic == "ess/feedin/enabled") {
-      feedInControlEnabled = (payload == "true" || payload == "1");
-    } else if (topic == "ess/feedin/target") {
-      targetFeedInPower = payload.toInt();
-    } else if (topic == "ess/feedin/max") {
-      maxFeedInPower = payload.toInt();
+  auto onMqttMessage = [](const char* topic, const char* payload) {
+    if (strcmp(topic, "ess/feedin/enabled") == 0) {
+      feedInControlEnabled = (strcmp(payload, "true") == 0 || strcmp(payload, "1") == 0);
+    } else if (strcmp(topic, "ess/feedin/target") == 0) {
+      targetFeedInPower = atof(payload);
+    } else if (strcmp(topic, "ess/feedin/max") == 0) {
+      maxFeedInPower = atof(payload);
     }
   };
   
@@ -491,6 +474,16 @@ void setup() {
   // Initialize StatusLED
   statusLED.begin();
   statusLED.setBootMode();
+  
+  // Initialize SPIFFS
+  if (!SPIFFS.begin(true)) {
+    Serial.println("Failed to mount SPIFFS filesystem");
+    statusLED.setErrorMode();
+  } else {
+    Serial.println("SPIFFS filesystem mounted successfully");
+    // Load MQTT configuration from SPIFFS
+    loadConfigFromSPIFFS();
+  }
   
   // Setup WiFi connection
   setupWiFiConnection();
@@ -564,19 +557,41 @@ void loop() {
     if (currentTime - lastStatusUpdate >= STATUS_UPDATE_INTERVAL) {
       lastStatusUpdate = currentTime;
       
-      // Send WebSocket update to all connected clients
-      String wsData = createFullStatusJson();
-      ws.textAll(wsData);
+      // Send WebSocket update to all connected clients - minimal JSON
+      if (ws.count() > 0) {
+        String wsJson;
+        wsJson.reserve(60); // Small pre-allocation
+        wsJson = "{\"soc\":";
+        wsJson += systemData.battery.soc;
+        wsJson += ",\"power\":";
+        wsJson += systemData.battery.power;
+        wsJson += ",\"enabled\":";
+        wsJson += (feedInControlEnabled ? "true" : "false");
+        wsJson += "}";
+        ws.textAll(wsJson);
+      }
       
-      // Publish to MQTT
-      // MQTT publishing
-      mqttClient.publish("ess/battery/soc", String(systemData.battery.soc));
-      mqttClient.publish("ess/battery/voltage", String(systemData.battery.voltage, 2));
-      mqttClient.publish("ess/battery/power", String(systemData.battery.power, 1));
-      mqttClient.publish("ess/multiplus/power", String(systemData.multiplus.esspower, 1));
-      mqttClient.publish("ess/feedin/enabled", String(feedInControlEnabled ? "true" : "false"));
-      mqttClient.publish("ess/feedin/target", String(targetFeedInPower));
-      mqttClient.publish("ess/feedin/max", String(maxFeedInPower));
+      // Publish to MQTT (string-free version)
+      char buffer[32];
+      snprintf(buffer, sizeof(buffer), "%d", systemData.battery.soc);
+      mqttClient.publish("ess/battery/soc", buffer);
+      
+      snprintf(buffer, sizeof(buffer), "%.2f", systemData.battery.voltage);
+      mqttClient.publish("ess/battery/voltage", buffer);
+      
+      snprintf(buffer, sizeof(buffer), "%.1f", systemData.battery.power);
+      mqttClient.publish("ess/battery/power", buffer);
+      
+      snprintf(buffer, sizeof(buffer), "%.1f", systemData.multiplus.esspower);
+      mqttClient.publish("ess/multiplus/power", buffer);
+      
+      mqttClient.publish("ess/feedin/enabled", feedInControlEnabled ? "true" : "false");
+      
+      snprintf(buffer, sizeof(buffer), "%.1f", targetFeedInPower);
+      mqttClient.publish("ess/feedin/target", buffer);
+      
+      snprintf(buffer, sizeof(buffer), "%.1f", maxFeedInPower);
+      mqttClient.publish("ess/feedin/max", buffer);
       
       // Log current status
       Serial.printf("Battery: %.1fV, %.1fA, %dW, SOC:%d%% | ", 

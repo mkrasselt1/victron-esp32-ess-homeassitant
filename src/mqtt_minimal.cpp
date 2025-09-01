@@ -1,4 +1,5 @@
 #include "mqtt_minimal.h"
+#include <string.h>
 
 MQTTMinimal* mqttInstance = nullptr;
 
@@ -11,15 +12,25 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 MQTTMinimal::MQTTMinimal() : client(wifiClient), lastReconnect(0), mqttPort(1883) {
     mqttInstance = this;
     client.setCallback(mqttCallback);
-    mqttServer = "192.168.30.1"; // Default
+    strcpy(mqttServer, "192.168.30.1"); // Default
+    mqttUsername[0] = '\0';
+    mqttPassword[0] = '\0';
+    payloadBuffer[0] = '\0';
 }
 
-void MQTTMinimal::begin(const String& server, int port, const String& username, const String& password) {
-    mqttServer = server;
+void MQTTMinimal::begin(const char* server, int port, const char* username, const char* password) {
+    strncpy(mqttServer, server, sizeof(mqttServer) - 1);
+    mqttServer[sizeof(mqttServer) - 1] = '\0';
+    
     mqttPort = port;
-    mqttUsername = username;
-    mqttPassword = password;
-    client.setServer(server.c_str(), port);
+    
+    strncpy(mqttUsername, username, sizeof(mqttUsername) - 1);
+    mqttUsername[sizeof(mqttUsername) - 1] = '\0';
+    
+    strncpy(mqttPassword, password, sizeof(mqttPassword) - 1);
+    mqttPassword[sizeof(mqttPassword) - 1] = '\0';
+    
+    client.setServer(server, port);
 }
 
 void MQTTMinimal::loop() {
@@ -37,26 +48,26 @@ bool MQTTMinimal::isConnected() {
     return client.connected();
 }
 
-void MQTTMinimal::publish(const String& topic, const String& value) {
+void MQTTMinimal::publish(const char* topic, const char* value) {
     if (isConnected()) {
-        client.publish(topic.c_str(), value.c_str());
+        client.publish(topic, value);
     }
 }
 
-void MQTTMinimal::setCallback(std::function<void(String topic, String payload)> callback) {
+void MQTTMinimal::setCallback(std::function<void(const char* topic, const char* payload)> callback) {
     messageCallback = callback;
 }
 
 void MQTTMinimal::connect() {
-    if (WiFi.status() != WL_CONNECTED || mqttServer.length() == 0) return;
+    if (WiFi.status() != WL_CONNECTED || strlen(mqttServer) == 0) return;
     
-    String clientId = "ESP32ESS";
+    const char* clientId = "ESP32ESS";
     bool connected = false;
     
-    if (mqttUsername.length() > 0) {
-        connected = client.connect(clientId.c_str(), mqttUsername.c_str(), mqttPassword.c_str());
+    if (strlen(mqttUsername) > 0) {
+        connected = client.connect(clientId, mqttUsername, mqttPassword);
     } else {
-        connected = client.connect(clientId.c_str());
+        connected = client.connect(clientId);
     }
     
     if (connected) {
@@ -66,11 +77,11 @@ void MQTTMinimal::connect() {
 
 void MQTTMinimal::onMessage(char* topic, byte* payload, unsigned int length) {
     if (messageCallback) {
-        String topicStr = String(topic);
-        String payloadStr = "";
-        for (int i = 0; i < length; i++) {
-            payloadStr += (char)payload[i];
+        // Null-terminate payload in buffer
+        if (length < sizeof(payloadBuffer)) {
+            memcpy(payloadBuffer, payload, length);
+            payloadBuffer[length] = '\0';
+            messageCallback(topic, payloadBuffer);
         }
-        messageCallback(topicStr, payloadStr);
     }
 }

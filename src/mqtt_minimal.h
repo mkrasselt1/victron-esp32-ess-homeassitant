@@ -7,23 +7,24 @@ class MQTTMinimal {
 public:
     MQTTMinimal();
     
-    void begin(const String& server, int port, const String& username = "", const String& password = "");
+    void begin(const char* server, int port, const char* username = "", const char* password = "");
     void loop();
     bool isConnected();
-    void publish(const String& topic, const String& value);
-    void setCallback(std::function<void(String topic, String payload)> callback);
+    void publish(const char* topic, const char* value);
+    void setCallback(std::function<void(const char* topic, const char* payload)> callback);
     void onMessage(char* topic, byte* payload, unsigned int length);
     
-    String mqttServer;
+    char mqttServer[64];
     int mqttPort;
+    char mqttUsername[32];
+    char mqttPassword[32];
     
 private:
     WiFiClient wifiClient;
     PubSubClient client;
-    std::function<void(String topic, String payload)> messageCallback;
+    std::function<void(const char* topic, const char* payload)> messageCallback;
     unsigned long lastReconnect;
-    String mqttUsername;
-    String mqttPassword;
+    char payloadBuffer[128];
     
     void connect();
 };

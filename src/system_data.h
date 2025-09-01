@@ -14,11 +14,10 @@
 #include <Arduino.h>
 #include <stdint.h>
 
-// Maximum sizes and constants
+// Maximum sizes and constants - DRASTICALLY REDUCED FOR ESP32
 #define MAX_METER_STATUS_BYTES 6
 #define SML_LENGTH_MAX 400
-#define LOGFILE_ALL_SIZE 60000
-#define LOGFILE_FEW_SIZE 5510
+// LOGFILE_ALL_SIZE and LOGFILE_FEW_SIZE removed - no more logging buffers!
 #define CPS 10000                               // Cycles per second for timer
 #define DEFAULT_SHELLY_SWITCHING_INTERVAL 450  // Default Shelly switching interval
 
@@ -162,7 +161,7 @@ struct PowerMeterData {
     uint16_t smlLength = 0;                     // Detected SML stream length
     
     // Power trend analysis
-    int powerTrendRingbuf[15*60];               // 15 minute power trend buffer
+    int powerTrendRingbuf[5*60];                // 5 minute power trend buffer (reduced from 15*60 to 5*60)
     int powerTrendPtr = 0;                      // Power trend buffer pointer
     float powerTrendConsumption = 0;            // Power trend consumption
     float powerTrendFeedIn = 0;                 // Power trend feed-in
@@ -219,16 +218,6 @@ struct ShellyControlData {
     int timeNewHourDone = -1;                   // Last hour processed
 };
 
-// Logging Data Structure
-struct LoggingData {
-    char logfileAll[LOGFILE_ALL_SIZE];          // Complete logfile buffer
-    int p_logfileAll = 0;                       // Logfile pointer
-    int logfileAllCounter = 0;                  // Logfile byte counter
-    char logfileFew[LOGFILE_FEW_SIZE];          // Important events logfile
-    int p_logfileFew = 0;                       // Few logfile pointer
-    int logfileFewCounter = 0;                  // Few logfile byte counter
-};
-
 // Timer and ISR Data Structure
 struct TimerData {
     volatile int essTimeoutCounter = 0;         // ESS timeout counter
@@ -251,18 +240,18 @@ struct PowerCalculationData {
     int electricMeterCurrentSign = 0;           // Current sign decision
     int16_t estTargetPower = 0;                 // ESS target power
     int essPowerStrategy = 5;                   // Power strategy
-    int16_t estTargetPowerRingBuf[45] = {0};    // Target power ring buffer
+    int16_t estTargetPowerRingBuf[10] = {0};    // Target power ring buffer (reduced from 45 to 10)
     int ptrPowerRingBuf = 0;                    // Power ring buffer pointer
-    int16_t pACinRingBuf[32] = {0};             // AC input ring buffer
+    int16_t pACinRingBuf[16] = {0};             // AC input ring buffer (reduced from 32 to 16)
     int ptr_pACinRingBuf = 0;                   // AC input buffer pointer
-    int16_t pInverterRingBuf[32] = {0};         // Inverter ring buffer
+    int16_t pInverterRingBuf[16] = {0};         // Inverter ring buffer (reduced from 32 to 16)
     int ptr_pInverterRingBuf = 0;               // Inverter buffer pointer
     int16_t powerACin = 0;                      // Power on AC input
-    int16_t powerChargerRingBuf[400] = {0};     // Charger power buffer
+    int16_t powerChargerRingBuf[50] = {0};      // Charger power buffer (reduced from 400 to 50)
     int ptr_powerChargerRingBuf = 0;            // Charger buffer pointer
-    int16_t powerControlDeviationRingBuf[400] = {0}; // Control deviation buffer
+    int16_t powerControlDeviationRingBuf[50] = {0}; // Control deviation buffer (reduced from 400 to 50)
     int ptr_powerControlDeviationRingBuf = 0;   // Control deviation pointer
-    int16_t powerMeterRingBuf[400] = {0};       // Meter power buffer
+    int16_t powerMeterRingBuf[50] = {0};        // Meter power buffer (reduced from 400 to 50)
     int ptr_powerMeterRingBuf = 0;              // Meter buffer pointer
     float beta = 0.001;                         // Cable resistance averaging factor
 };
@@ -291,7 +280,6 @@ struct SystemData {
     PowerMeterData powerMeter;
     SystemStatusData systemStatus;
     ShellyControlData shellyControl;
-    LoggingData logging;
     TimerData timer;
     PowerCalculationData powerCalc;
     OpticalMeterData opticalMeter;
