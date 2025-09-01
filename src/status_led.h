@@ -2,7 +2,6 @@
 #define STATUS_LED_H
 
 #include <Arduino.h>
-#include <FastLED.h>
 
 /**
  * Status LED Controller for WS2812 LED on GPIO 2 (LilyGO T-CAN485)
@@ -27,6 +26,12 @@
 #define STATUS_LED_COUNT 1
 #define STATUS_LED_BRIGHTNESS 50  // 0-255
 
+// Simple RGB color structure
+struct RGB {
+    uint8_t r, g, b;
+    RGB(uint8_t red = 0, uint8_t green = 0, uint8_t blue = 0) : r(red), g(green), b(blue) {}
+};
+
 enum StatusLedMode {
     LED_MODE_BOOT,
     LED_MODE_WIFI_CONNECTING,
@@ -43,7 +48,6 @@ enum PowerDirection {
 
 class StatusLED {
 private:
-    CRGB leds[STATUS_LED_COUNT];
     StatusLedMode currentMode;
     PowerDirection currentDirection;
     
@@ -57,11 +61,16 @@ private:
     unsigned long lastBreathUpdate;
     
     // Color definitions
-    static const CRGB COLOR_BLUE;
-    static const CRGB COLOR_RED;
-    static const CRGB COLOR_GREEN;
-    static const CRGB COLOR_ORANGE;
-    static const CRGB COLOR_OFF;
+    static const RGB COLOR_BLUE;
+    static const RGB COLOR_RED;
+    static const RGB COLOR_GREEN;
+    static const RGB COLOR_ORANGE;
+    static const RGB COLOR_OFF;
+    
+    // WS2812 low-level control
+    void sendByte(uint8_t byte);
+    void sendRGB(const RGB& color);
+    void show();
     
     // Helper methods
     void updateBootMode();
@@ -69,8 +78,8 @@ private:
     void updateNormalMode(float power);
     void updateErrorMode();
     void updateBreathing();
-    void setBlink(CRGB color, unsigned long interval);
-    void setSolid(CRGB color);
+    void setBlink(const RGB& color, unsigned long interval);
+    void setSolid(const RGB& color);
     void setOff();
     unsigned long calculateBlinkInterval(float absolutePower);
     PowerDirection determinePowerDirection(float power);

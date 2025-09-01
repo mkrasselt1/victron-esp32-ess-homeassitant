@@ -1,14 +1,11 @@
 #include "status_led.h"
 
 // Color definitions
-const CRGB StatusLED::COLOR_BLUE = CRGB(0, 0, 255);
-const CRGB StatusLED::COLOR_RED = CRGB(255, 0, 0);
-const CRGB StatusLED::COLOR_GREEN = CRGB(0, 255, 0);
-const CRGB StatusLED::COLOR_ORANGE = CRGB(255, 165, 0);
-const CRGB StatusLED::COLOR_OFF = CRGB(0, 0, 0);
-
-// Global instance
-// StatusLED statusLED; // Removed - defined in main.cpp
+const RGB StatusLED::COLOR_BLUE = RGB(0, 0, 255);
+const RGB StatusLED::COLOR_RED = RGB(255, 0, 0);
+const RGB StatusLED::COLOR_GREEN = RGB(0, 255, 0);
+const RGB StatusLED::COLOR_ORANGE = RGB(255, 165, 0);
+const RGB StatusLED::COLOR_OFF = RGB(0, 0, 0);
 
 StatusLED::StatusLED() {
     currentMode = LED_MODE_BOOT;
@@ -21,14 +18,52 @@ StatusLED::StatusLED() {
     lastBreathUpdate = 0;
 }
 
-void StatusLED::begin() {
-    FastLED.addLeds<WS2812, STATUS_LED_PIN, GRB>(leds, STATUS_LED_COUNT);
-    FastLED.setBrightness(STATUS_LED_BRIGHTNESS);
-    FastLED.clear();
-    FastLED.show();
+// WS2812 Protocol implementation for ESP32
+// Timing for WS2812: T0H=0.4µs, T0L=0.85µs, T1H=0.8µs, T1L=0.45µs
+void StatusLED::sendByte(uint8_t byte) {
+    for (int i = 7; i >= 0; i--) {
+        if (byte & (1 << i)) {
+            // Send '1' bit: HIGH for ~0.8µs, LOW for ~0.45µs
+            digitalWrite(STATUS_LED_PIN, HIGH);
+            delayMicroseconds(1);  // ~0.8µs
+            digitalWrite(STATUS_LED_PIN, LOW);
+            // No delay needed for T1L as next bit or end handles it
+        } else {
+            // Send '0' bit: HIGH for ~0.4µs, LOW for ~0.85µs  
+            digitalWrite(STATUS_LED_PIN, HIGH);
+            // Minimal delay for T0H
+            digitalWrite(STATUS_LED_PIN, LOW);
+            delayMicroseconds(1);  // ~0.85µs
+        }
+    }
+}
+
+void StatusLED::sendRGB(const RGB& color) {
+    // WS2812 expects GRB order
+    // Apply brightness scaling
+    uint8_t brightness = STATUS_LED_BRIGHTNESS;
+    uint8_t g = (color.g * brightness) / 255;
+    uint8_t r = (color.r * brightness) / 255;
+    uint8_t b = (color.b * brightness) / 255;
     
+    sendByte(g);
+    sendByte(r);
+    sendByte(b);
+}
+
+void StatusLED::show() {
+    // Send RESET pulse (>50µs LOW)
+    digitalWrite(STATUS_LED_PIN, LOW);
+    delayMicroseconds(60);
+}
+
+void StatusLED::begin() {
+    pinMode(STATUS_LED_PIN, OUTPUT);
+    digitalWrite(STATUS_LED_PIN, LOW);
+    
+    setOff();
     setBootMode();
-    Serial.println("[StatusLED] Initialized on GPIO 4");
+    Serial.println("[StatusLED] Initialized on GPIO 4 (native WS2812)");
 }
 
 void StatusLED::setBootMode() {
@@ -97,8 +132,6 @@ void StatusLED::update() {
             updateErrorMode();
             break;
     }
-    
-    FastLED.show();
 }
 
 void StatusLED::updateBootMode() {
@@ -132,27 +165,30 @@ void StatusLED::updateErrorMode() {
 void StatusLED::updateBreathing() {
     unsigned long currentTime = millis();
     
-    if (currentTime - lastBreathUpdate >= 20) { // Update every 20ms for smooth breathing
+    if (currentTime - lastBreathUpdate >= 50) { // Update every 50ms for smooth breathing
         lastBreathUpdate = currentTime;
         
         if (breathDirection) {
-            breathBrightness += 2;
-            if (breathBrightness >= 100) {
+            breathBrightness += 5;
+            if (breathBrightness >= 255) {
+                breathBrightness = 255;
                 breathDirection = false;
             }
         } else {
-            breathBrightness -= 2;
-            if (breathBrightness <= 10) {
+            breathBrightness -= 5;
+            if (breathBrightness <= 20) { // Don't go completely dark
+                breathBrightness = 20;
                 breathDirection = true;
             }
         }
         
-        // Set blue color with breathing brightness
-        leds[0] = CRGB(0, 0, breathBrightness);
+        RGB breathColor(0, 0, breathBrightness);
+        sendRGB(breathColor);
+        show();
     }
 }
 
-void StatusLED::setBlink(CRGB color, unsigned long interval) {
+void StatusLED::setBlink(const RGB& color, unsigned long interval) {
     unsigned long currentTime = millis();
     
     if (currentTime - lastUpdate >= interval) {
@@ -160,25 +196,26 @@ void StatusLED::setBlink(CRGB color, unsigned long interval) {
         ledState = !ledState;
         
         if (ledState) {
-            leds[0] = color;
+            sendRGB(color);
         } else {
-            leds[0] = COLOR_OFF;
+            sendRGB(COLOR_OFF);
         }
+        show();
     }
 }
 
-void StatusLED::setSolid(CRGB color) {
-    leds[0] = color;
+void StatusLED::setSolid(const RGB& color) {
+    sendRGB(color);
+    show();
 }
 
 void StatusLED::setOff() {
-    leds[0] = COLOR_OFF;
+    sendRGB(COLOR_OFF);
+    show();
 }
 
 unsigned long StatusLED::calculateBlinkInterval(float absolutePower) {
-    if (absolutePower < 100) {
-        return 0; // No blinking for very low power (breathing mode)
-    } else if (absolutePower < 500) {
+    if (absolutePower < 500) {
         return 1000; // 1Hz - slow blink
     } else if (absolutePower < 1500) {
         return 500;  // 2Hz - medium blink
@@ -191,49 +228,44 @@ unsigned long StatusLED::calculateBlinkInterval(float absolutePower) {
 
 PowerDirection StatusLED::determinePowerDirection(float power) {
     if (power > 100) {
-        return POWER_CHARGING;   // Positive power = charging
+        return POWER_CHARGING;
     } else if (power < -100) {
-        return POWER_DISCHARGING; // Negative power = discharging
+        return POWER_DISCHARGING;
     } else {
-        return POWER_IDLE;       // Power near zero = idle
+        return POWER_IDLE;
     }
 }
 
+bool StatusLED::isInitialized() const {
+    return true; // Simple implementation always returns true
+}
+
 void StatusLED::setBrightness(uint8_t brightness) {
-    FastLED.setBrightness(brightness);
+    // Note: In this implementation, brightness is applied in sendRGB()
+    // This is a placeholder for API compatibility
 }
 
 void StatusLED::test() {
-    Serial.println("[StatusLED] Testing all colors...");
+    Serial.println("[StatusLED] Running test sequence...");
     
-    // Test Red
+    // Test red
     setSolid(COLOR_RED);
-    FastLED.show();
     delay(1000);
     
-    // Test Green
+    // Test green  
     setSolid(COLOR_GREEN);
-    FastLED.show();
     delay(1000);
     
-    // Test Blue
+    // Test blue
     setSolid(COLOR_BLUE);
-    FastLED.show();
     delay(1000);
     
-    // Test Orange
+    // Test orange
     setSolid(COLOR_ORANGE);
-    FastLED.show();
     delay(1000);
     
-    // Off
+    // Turn off
     setOff();
-    FastLED.show();
-    delay(500);
     
-    Serial.println("[StatusLED] Test completed");
-}
-
-bool StatusLED::isInitialized() const {
-    return true; // FastLED doesn't provide an explicit initialization check
+    Serial.println("[StatusLED] Test sequence completed");
 }

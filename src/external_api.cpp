@@ -12,6 +12,11 @@ void ExternalAPI::setup() {
     
     Serial.println("[ExternalAPI] Setting up REST API endpoints...");
     
+    // General status endpoint (simplified for testing without hardware)
+    server->on("/api/status", HTTP_GET, [this](AsyncWebServerRequest* request) {
+        handleGetGeneralStatus(request);
+    });
+    
     // Status and information endpoints
     server->on("/api/vebus/status", HTTP_GET, [this](AsyncWebServerRequest* request) {
         handleGetStatus(request);
@@ -77,7 +82,7 @@ void ExternalAPI::sendJsonResponse(AsyncWebServerRequest* request, const JsonDoc
 }
 
 void ExternalAPI::sendErrorResponse(AsyncWebServerRequest* request, const char* message, int statusCode) {
-    StaticJsonDocument<256> doc;
+    JsonDocument doc;
     doc["error"] = message;
     doc["timestamp"] = millis();
     sendJsonResponse(request, doc, statusCode);
@@ -93,48 +98,119 @@ bool ExternalAPI::validateJsonRequest(AsyncWebServerRequest* request, JsonDocume
     return error == DeserializationError::Ok;
 }
 
-void ExternalAPI::handleGetStatus(AsyncWebServerRequest* request) {
-    StaticJsonDocument<1024> doc;
+void ExternalAPI::handleGetGeneralStatus(AsyncWebServerRequest* request) {
+    JsonDocument doc;
     
-    if (!veBusHandler->isInitialized()) {
-        sendErrorResponse(request, "VE.Bus handler not initialized", 503);
-        return;
+    Serial.println("[API] Processing /api/status request (general status)");
+    
+    // System information
+    doc["system"]["uptime"] = millis();
+    doc["system"]["free_heap"] = ESP.getFreeHeap();
+    doc["system"]["chip_model"] = ESP.getChipModel();
+    doc["system"]["chip_cores"] = ESP.getChipCores();
+    doc["system"]["chip_revision"] = ESP.getChipRevision();
+    doc["system"]["flash_size"] = ESP.getFlashChipSize();
+    
+    // WiFi status
+    doc["wifi"]["connected"] = WiFi.status() == WL_CONNECTED;
+    if (WiFi.status() == WL_CONNECTED) {
+        doc["wifi"]["ip"] = WiFi.localIP().toString();
+        doc["wifi"]["ssid"] = WiFi.SSID();
+        doc["wifi"]["rssi"] = WiFi.RSSI();
     }
     
-    // Get basic status
-    doc["initialized"] = veBusHandler->isInitialized();
-    doc["task_running"] = veBusHandler->isTaskRunning();
-    doc["device_online"] = veBusHandler->isDeviceOnline();
-    doc["communication_quality"] = veBusHandler->getCommunicationQuality();
-    doc["last_communication"] = veBusHandler->getLastCommunicationTime();
-    
-    // Get device state
-    VeBusDeviceState deviceState = veBusHandler->getDeviceState();
-    doc["dc_voltage"] = deviceState.dcInfo.dcVoltage;
-    doc["dc_current"] = deviceState.dcInfo.dcCurrent;
-    doc["ac_voltage"] = deviceState.acInfo.acVoltage;
-    doc["ac_frequency"] = deviceState.acInfo.acFrequency;
-    doc["ac_power"] = deviceState.acInfo.acPower;
-    doc["switch_state"] = deviceState.switchState;
-    doc["device_status"] = deviceState.switchState;
-    
-    // Get detailed device status
-    VeBusDeviceStatusInfo status;
-    if (veBusHandler->requestDeviceStatus(status)) {
-        doc["device_state"] = status.state;
-        doc["device_mode"] = status.mode;
-        doc["device_alarm"] = status.alarm;
-        doc["device_warnings"] = status.warnings;
+    // VE.Bus status (safe check)
+    if (veBusHandler) {
+        doc["vebus"]["initialized"] = veBusHandler->isInitialized();
+        doc["vebus"]["task_running"] = veBusHandler->isTaskRunning();
+        doc["vebus"]["device_online"] = veBusHandler->isDeviceOnline();
+    } else {
+        doc["vebus"]["initialized"] = false;
+        doc["vebus"]["task_running"] = false;
+        doc["vebus"]["device_online"] = false;
+        doc["vebus"]["note"] = "No hardware connected";
     }
     
     doc["api_version"] = "MK2-Extended-1.0";
     doc["timestamp"] = millis();
     
+    Serial.println("[API] Sending general status response");
     sendJsonResponse(request, doc);
+    Serial.println("[API] General status request completed successfully");
+}
+
+void ExternalAPI::handleGetStatus(AsyncWebServerRequest* request) {
+    JsonDocument doc;
+    
+    try {
+        Serial.println("[API] Processing /api/status request");
+        
+        if (!veBusHandler) {
+            Serial.println("[API] ERROR: veBusHandler is null");
+            sendErrorResponse(request, "VE.Bus handler not available", 503);
+            return;
+        }
+        
+        if (!veBusHandler->isInitialized()) {
+            Serial.println("[API] ERROR: VE.Bus handler not initialized");
+            sendErrorResponse(request, "VE.Bus handler not initialized", 503);
+            return;
+        }
+        
+        Serial.println("[API] Adding basic status information");
+        
+        // Get basic status
+        doc["initialized"] = veBusHandler->isInitialized();
+        doc["task_running"] = veBusHandler->isTaskRunning();
+        doc["device_online"] = veBusHandler->isDeviceOnline();
+        doc["communication_quality"] = veBusHandler->getCommunicationQuality();
+        doc["last_communication"] = veBusHandler->getLastCommunicationTime();
+        
+        Serial.println("[API] Getting device state");
+        
+        // Get device state - with error handling
+        VeBusDeviceState deviceState = veBusHandler->getDeviceState();
+        doc["dc_voltage"] = deviceState.dcInfo.dcVoltage;
+        doc["dc_current"] = deviceState.dcInfo.dcCurrent;
+        doc["ac_voltage"] = deviceState.acInfo.acVoltage;
+        doc["ac_frequency"] = deviceState.acInfo.acFrequency;
+        doc["ac_power"] = deviceState.acInfo.acPower;
+        doc["switch_state"] = deviceState.switchState;
+        doc["device_status"] = deviceState.switchState;
+        
+        Serial.println("[API] Attempting to get detailed device status");
+        
+        // Get detailed device status - with error handling
+        VeBusDeviceStatusInfo status;
+        if (veBusHandler->requestDeviceStatus(status)) {
+            Serial.println("[API] Device status request successful");
+            doc["device_state"] = status.state;
+            doc["device_mode"] = status.mode;
+            doc["device_alarm"] = status.alarm;
+            doc["device_warnings"] = status.warnings;
+        } else {
+            Serial.println("[API] Device status request failed - using defaults");
+            doc["device_state"] = 0;
+            doc["device_mode"] = 0;
+            doc["device_alarm"] = 0;
+            doc["device_warnings"] = 0;
+        }
+        
+        doc["api_version"] = "MK2-Extended-1.0";
+        doc["timestamp"] = millis();
+        
+        Serial.println("[API] Sending JSON response");
+        sendJsonResponse(request, doc);
+        Serial.println("[API] Status request completed successfully");
+        
+    } catch (...) {
+        Serial.println("[API] EXCEPTION in handleGetStatus");
+        sendErrorResponse(request, "Internal server error in status handler", 500);
+    }
 }
 
 void ExternalAPI::handleGetVersion(AsyncWebServerRequest* request) {
-    StaticJsonDocument<512> doc;
+    JsonDocument doc;
     
     if (!veBusHandler->isInitialized()) {
         sendErrorResponse(request, "VE.Bus handler not initialized", 503);
@@ -158,14 +234,14 @@ void ExternalAPI::handleGetVersion(AsyncWebServerRequest* request) {
 }
 
 void ExternalAPI::handleSetSwitch(AsyncWebServerRequest* request) {
-    StaticJsonDocument<256> requestDoc;
+    JsonDocument requestDoc;
     
     if (!validateJsonRequest(request, requestDoc)) {
         sendErrorResponse(request, "Invalid JSON in request body", 400);
         return;
     }
     
-    if (!requestDoc.containsKey("state")) {
+    if (requestDoc["state"].isNull()) {
         sendErrorResponse(request, "Missing 'state' parameter", 400);
         return;
     }
@@ -178,7 +254,7 @@ void ExternalAPI::handleSetSwitch(AsyncWebServerRequest* request) {
     
     bool success = veBusHandler->setSwitchState((VeBusSwitchState)state);
     
-    StaticJsonDocument<256> responseDoc;
+    JsonDocument responseDoc;
     responseDoc["success"] = success;
     responseDoc["state"] = state;
     responseDoc["timestamp"] = millis();
@@ -191,14 +267,14 @@ void ExternalAPI::handleSetSwitch(AsyncWebServerRequest* request) {
 }
 
 void ExternalAPI::handleSetPower(AsyncWebServerRequest* request) {
-    StaticJsonDocument<256> requestDoc;
+    JsonDocument requestDoc;
     
     if (!validateJsonRequest(request, requestDoc)) {
         sendErrorResponse(request, "Invalid JSON in request body", 400);
         return;
     }
     
-    if (!requestDoc.containsKey("power")) {
+    if (requestDoc["power"].isNull()) {
         sendErrorResponse(request, "Missing 'power' parameter", 400);
         return;
     }
@@ -206,7 +282,7 @@ void ExternalAPI::handleSetPower(AsyncWebServerRequest* request) {
     int16_t power = requestDoc["power"];
     bool success = veBusHandler->sendEssPowerCommand(power);
     
-    StaticJsonDocument<256> responseDoc;
+    JsonDocument responseDoc;
     responseDoc["success"] = success;
     responseDoc["power"] = power;
     responseDoc["timestamp"] = millis();
@@ -219,14 +295,14 @@ void ExternalAPI::handleSetPower(AsyncWebServerRequest* request) {
 }
 
 void ExternalAPI::handleSetCurrent(AsyncWebServerRequest* request) {
-    StaticJsonDocument<256> requestDoc;
+    JsonDocument requestDoc;
     
     if (!validateJsonRequest(request, requestDoc)) {
         sendErrorResponse(request, "Invalid JSON in request body", 400);
         return;
     }
     
-    if (!requestDoc.containsKey("current_limit")) {
+    if (requestDoc["current_limit"].isNull()) {
         sendErrorResponse(request, "Missing 'current_limit' parameter", 400);
         return;
     }
@@ -234,7 +310,7 @@ void ExternalAPI::handleSetCurrent(AsyncWebServerRequest* request) {
     uint8_t currentLimit = requestDoc["current_limit"];
     bool success = veBusHandler->sendCurrentLimitCommand(currentLimit);
     
-    StaticJsonDocument<256> responseDoc;
+    JsonDocument responseDoc;
     responseDoc["success"] = success;
     responseDoc["current_limit"] = currentLimit;
     responseDoc["timestamp"] = millis();
@@ -249,7 +325,7 @@ void ExternalAPI::handleSetCurrent(AsyncWebServerRequest* request) {
 void ExternalAPI::handleReset(AsyncWebServerRequest* request) {
     bool success = veBusHandler->resetDevice();
     
-    StaticJsonDocument<256> responseDoc;
+    JsonDocument responseDoc;
     responseDoc["success"] = success;
     responseDoc["timestamp"] = millis();
     
@@ -263,7 +339,7 @@ void ExternalAPI::handleReset(AsyncWebServerRequest* request) {
 void ExternalAPI::handleClearErrors(AsyncWebServerRequest* request) {
     bool success = veBusHandler->clearErrors();
     
-    StaticJsonDocument<256> responseDoc;
+    JsonDocument responseDoc;
     responseDoc["success"] = success;
     responseDoc["timestamp"] = millis();
     
@@ -275,7 +351,7 @@ void ExternalAPI::handleClearErrors(AsyncWebServerRequest* request) {
 }
 
 void ExternalAPI::handleGetErrors(AsyncWebServerRequest* request) {
-    StaticJsonDocument<512> doc;
+    JsonDocument doc;
     
     if (!veBusHandler->isInitialized()) {
         sendErrorResponse(request, "VE.Bus handler not initialized", 503);
@@ -299,7 +375,7 @@ void ExternalAPI::handleGetErrors(AsyncWebServerRequest* request) {
 }
 
 void ExternalAPI::handleGetWarnings(AsyncWebServerRequest* request) {
-    StaticJsonDocument<512> doc;
+    JsonDocument doc;
     
     if (!veBusHandler->isInitialized()) {
         sendErrorResponse(request, "VE.Bus handler not initialized", 503);
@@ -324,14 +400,14 @@ void ExternalAPI::handleGetWarnings(AsyncWebServerRequest* request) {
 }
 
 void ExternalAPI::handleSetAutoRestart(AsyncWebServerRequest* request) {
-    StaticJsonDocument<256> requestDoc;
+    JsonDocument requestDoc;
     
     if (!validateJsonRequest(request, requestDoc)) {
         sendErrorResponse(request, "Invalid JSON in request body", 400);
         return;
     }
     
-    if (!requestDoc.containsKey("enabled")) {
+    if (requestDoc["enabled"].isNull()) {
         sendErrorResponse(request, "Missing 'enabled' parameter", 400);
         return;
     }
@@ -339,7 +415,7 @@ void ExternalAPI::handleSetAutoRestart(AsyncWebServerRequest* request) {
     bool enabled = requestDoc["enabled"];
     bool success = veBusHandler->enableAutoRestart(enabled);
     
-    StaticJsonDocument<256> responseDoc;
+    JsonDocument responseDoc;
     responseDoc["success"] = success;
     responseDoc["auto_restart_enabled"] = enabled;
     responseDoc["timestamp"] = millis();
@@ -352,14 +428,14 @@ void ExternalAPI::handleSetAutoRestart(AsyncWebServerRequest* request) {
 }
 
 void ExternalAPI::handleSetVoltageRange(AsyncWebServerRequest* request) {
-    StaticJsonDocument<512> requestDoc;
+    JsonDocument requestDoc;
     
     if (!validateJsonRequest(request, requestDoc)) {
         sendErrorResponse(request, "Invalid JSON in request body", 400);
         return;
     }
     
-    if (!requestDoc.containsKey("min_voltage") || !requestDoc.containsKey("max_voltage")) {
+    if (requestDoc["min_voltage"].isNull() || requestDoc["max_voltage"].isNull()) {
         sendErrorResponse(request, "Missing 'min_voltage' or 'max_voltage' parameter", 400);
         return;
     }
@@ -374,7 +450,7 @@ void ExternalAPI::handleSetVoltageRange(AsyncWebServerRequest* request) {
     
     bool success = veBusHandler->setVoltageRange(minVoltage, maxVoltage);
     
-    StaticJsonDocument<256> responseDoc;
+    JsonDocument responseDoc;
     responseDoc["success"] = success;
     responseDoc["min_voltage"] = minVoltage;
     responseDoc["max_voltage"] = maxVoltage;
@@ -388,14 +464,14 @@ void ExternalAPI::handleSetVoltageRange(AsyncWebServerRequest* request) {
 }
 
 void ExternalAPI::handleSetFrequencyRange(AsyncWebServerRequest* request) {
-    StaticJsonDocument<512> requestDoc;
+    JsonDocument requestDoc;
     
     if (!validateJsonRequest(request, requestDoc)) {
         sendErrorResponse(request, "Invalid JSON in request body", 400);
         return;
     }
     
-    if (!requestDoc.containsKey("min_frequency") || !requestDoc.containsKey("max_frequency")) {
+    if (requestDoc["min_frequency"].isNull() || requestDoc["max_frequency"].isNull()) {
         sendErrorResponse(request, "Missing 'min_frequency' or 'max_frequency' parameter", 400);
         return;
     }
@@ -410,7 +486,7 @@ void ExternalAPI::handleSetFrequencyRange(AsyncWebServerRequest* request) {
     
     bool success = veBusHandler->setFrequencyRange(minFreq, maxFreq);
     
-    StaticJsonDocument<256> responseDoc;
+    JsonDocument responseDoc;
     responseDoc["success"] = success;
     responseDoc["min_frequency"] = minFreq;
     responseDoc["max_frequency"] = maxFreq;
@@ -424,7 +500,7 @@ void ExternalAPI::handleSetFrequencyRange(AsyncWebServerRequest* request) {
 }
 
 void ExternalAPI::handleGetStatistics(AsyncWebServerRequest* request) {
-    StaticJsonDocument<1024> doc;
+    JsonDocument doc;
     
     if (!veBusHandler->isInitialized()) {
         sendErrorResponse(request, "VE.Bus handler not initialized", 503);
@@ -450,3 +526,4 @@ void ExternalAPI::handleGetStatistics(AsyncWebServerRequest* request) {
 
 // Global instance - will be initialized in main.cpp
 // ExternalAPI externalAPI(&server, &veBusHandler);
+

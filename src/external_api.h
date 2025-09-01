@@ -4,6 +4,7 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <ESPAsyncWebServer.h>
+#include <WiFi.h>
 #include "vebus_handler.h"
 #include "system_data.h"
 
@@ -43,6 +44,7 @@ public:
     void setup();
     
     // API endpoint handlers
+    void handleGetGeneralStatus(AsyncWebServerRequest* request);  // Simple status without hardware
     void handleGetStatus(AsyncWebServerRequest* request);
     void handleGetVersion(AsyncWebServerRequest* request);
     void handleSetSwitch(AsyncWebServerRequest* request);

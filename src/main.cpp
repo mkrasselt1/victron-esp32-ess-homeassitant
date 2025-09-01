@@ -15,24 +15,27 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
-#include <WiFiManager.h>
 #include <ESPAsyncWebServer.h>
 #include <Update.h>
+#include <ESPmDNS.h>
+#include <WiFiUdp.h>
 #include <ArduinoOTA.h>
+#include <SPIFFS.h>
 #include "system_data.h"
 #include "vebus_handler.h"
 #include "status_led.h"
 #include "pylontech_can.h"
 #include "external_api.h"
+#include "wifi_provisioning.h"
 
 // Global objects
 VeBusHandler veBusHandler;
 StatusLED statusLED;
 PylontechCAN pylontechCAN;
 AsyncWebServer webServer(80);
+AsyncWebSocket ws("/ws");
 ExternalAPI externalAPI(&webServer, &veBusHandler);
 SystemData systemData;
-WiFiManager wm;
 
 // Timer and timing variables
 hw_timer_t* timer = nullptr;
@@ -41,6 +44,11 @@ unsigned long lastStatusUpdate = 0;
 unsigned long lastLedUpdate = 0;
 const unsigned long STATUS_UPDATE_INTERVAL = 1000;  // 1 second
 const unsigned long LED_UPDATE_INTERVAL = 50;       // 50ms
+
+// Feed-in power control
+float targetFeedInPower = 0.0;  // Target feed-in power in watts
+float maxFeedInPower = 5000.0;  // Maximum allowed feed-in power in watts
+bool feedInControlEnabled = false;  // Enable/disable feed-in control
 
 // Function prototypes
 String createBatteryJson();
@@ -108,6 +116,89 @@ String createLedJson() {
   return output;
 }
 
+String createFullStatusJson() {
+  JsonDocument doc;
+  
+  // Battery data
+  doc["battery_soc"] = systemData.battery.soc;
+  doc["battery_voltage"] = systemData.battery.voltage;
+  doc["battery_current"] = systemData.battery.current;
+  doc["battery_power"] = systemData.battery.power;
+  doc["battery_temperature"] = systemData.battery.temperature;
+  doc["battery_soh"] = systemData.battery.soh;
+  doc["battery_chargeVoltage"] = systemData.battery.chargeVoltage;
+  doc["battery_chargeCurrentLimit"] = systemData.battery.chargeCurrentLimit;
+  doc["battery_dischargeCurrentLimit"] = systemData.battery.dischargeCurrentLimit;
+  doc["battery_dischargeVoltage"] = systemData.battery.dischargeVoltage;
+  doc["battery_manufacturer"] = systemData.battery.manufacturer;
+  doc["battery_nrPacksInParallel"] = systemData.battery.nrPacksInParallel;
+  doc["battery_protectionFlags1"] = systemData.battery.protectionFlags1;
+  doc["battery_protectionFlags2"] = systemData.battery.protectionFlags2;
+  doc["battery_warningFlags1"] = systemData.battery.warningFlags1;
+  doc["battery_warningFlags2"] = systemData.battery.warningFlags2;
+  doc["battery_requestFlags"] = systemData.battery.requestFlags;
+  
+  // MultiPlus data
+  doc["multiplusDcVoltage"] = systemData.multiplus.dcVoltage;
+  doc["multiplusDcCurrent"] = systemData.multiplus.dcCurrent;
+  doc["multiplusESSpower"] = systemData.multiplus.esspower;
+  doc["multiplusAcFrequency"] = systemData.multiplus.acFrequency;
+  doc["multiplusUMainsRMS"] = systemData.multiplus.uMainsRMS;
+  doc["multiplusTemp"] = systemData.multiplus.temp;
+  doc["multiplusStatus80"] = systemData.multiplus.status80;
+  doc["multiplusVoltageStatus"] = systemData.multiplus.voltageStatus;
+  doc["multiplusEmergencyPowerStatus"] = systemData.multiplus.emergencyPowerStatus;
+  doc["multiplusPinverterFiltered"] = systemData.multiplus.esspower; // Approximation
+  doc["multiplusPmainsFiltered"] = 0; // Not available
+  doc["multiplusPowerFactor"] = 1.0; // Default
+  doc["masterMultiLED_ActualInputCurrentLimit"] = 16.0; // Default
+  
+  // VE.Bus communication stats (simplified for available methods)
+  doc["veBus_isOnline"] = veBusHandler.isTaskRunning();
+  doc["veBus_communicationQuality"] = veBusHandler.getCommunicationQuality();
+  doc["veBus_framesSent"] = 0; // Not available
+  doc["veBus_framesReceived"] = 0; // Not available  
+  doc["veBus_checksumErrors"] = 0; // Not available
+  doc["veBus_timeoutErrors"] = 0; // Not available
+  
+  // Status LED data
+  doc["statusLED_mode"] = (int)statusLED.getCurrentMode();
+  doc["statusLED_direction"] = (int)statusLED.getCurrentDirection();
+  doc["statusLED_initialized"] = true;
+  
+  // System status
+  doc["switchMode"] = "Auto";
+  doc["essPowerStrategy"] = "Optimized";
+  doc["minimumFeedIn"] = 0;
+  doc["averageControlDeviationFeedIn"] = 0;
+  doc["averageChargingPower"] = 0;
+  doc["bmsPowerAverage"] = systemData.battery.power;
+  doc["powerTrendConsumption"] = 0;
+  doc["powerTrendFeedIn"] = 0;
+  doc["secondsInMinStrategy"] = 0;
+  doc["secondsInMaxStrategy"] = 0;
+  
+  // Feed-in power control
+  doc["feedInControl_enabled"] = feedInControlEnabled;
+  doc["feedInControl_target"] = targetFeedInPower;
+  doc["feedInControl_max"] = maxFeedInPower;
+  doc["feedInControl_current"] = systemData.multiplus.esspower; // Current AC power output
+  
+  String output;
+  serializeJson(doc, output);
+  return output;
+}
+
+void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len) {
+  if (type == WS_EVT_CONNECT) {
+    Serial.printf("WebSocket client #%u connected from %s\n", client->id(), client->remoteIP().toString().c_str());
+    // Send initial data to new client
+    client->text(createFullStatusJson());
+  } else if (type == WS_EVT_DISCONNECT) {
+    Serial.printf("WebSocket client #%u disconnected\n", client->id());
+  }
+}
+
 // Main processing functions
 void updateStatusLED() {
   // Update LED based on current power flow
@@ -124,45 +215,64 @@ void updateStatusLED() {
 }
 
 void processTimerEvents() {
-  static unsigned long wifiCheckTime = 0;
-  
-  // Check WiFi status every 5 seconds
-  if (millis() - wifiCheckTime > 5000) {
-    wifiCheckTime = millis();
-    
-    if (!WiFi.isConnected()) {
-      statusLED.setWiFiConnecting();
-    } else {
-      statusLED.setNormalOperation();
-    }
-  }
+  // WiFi provisioning is handled in its own loop
 }
 
-void setupWiFiManager() {
-  // Set custom parameters for WiFiManager
-  wm.setConfigPortalTimeout(300); // 5 minutes timeout
-  wm.setAPStaticIPConfig(IPAddress(192,168,4,1), IPAddress(192,168,4,1), IPAddress(255,255,255,0));
-  
+void setupWiFiConnection() {
   // Set status LED to connecting
   statusLED.setWiFiConnecting();
   
-  // Try to connect to WiFi
-  if (!wm.autoConnect("VictronESS-Config", "12345678")) {
-    Serial.println("Failed to connect to WiFi - restarting");
-    statusLED.setErrorMode();
-    ESP.restart();
+  // Start WiFi provisioning
+  Serial.println("Starting WiFi provisioning...");
+  Serial.println("Use serial commands or connect to 'ESP32-Setup' AP");
+  wifiProvisioning.printCommands();
+  
+  if (wifiProvisioning.begin()) {
+    Serial.println("WiFi connected successfully!");
+    Serial.print("IP address: ");
+    Serial.println(WiFi.localIP());
+    statusLED.setWiFiConnected();
+  } else {
+    Serial.println("WiFi setup mode active");
+    statusLED.setWiFiConnecting();
   }
-  
-  Serial.println("WiFi connected successfully!");
-  Serial.print("IP address: ");
-  Serial.println(WiFi.localIP());
-  
-  statusLED.setWiFiConnected();
 }
 
 void setupOTA() {
   // ArduinoOTA for PlatformIO remote upload
-  ArduinoOTA.begin(WiFi.localIP(), "victron-esp32-ess", "victron123", InternalStorage);
+  ArduinoOTA.onStart([]() {
+    String type;
+    // The OTA type is not available via getCommand(), so just print "sketch" for U_FLASH and "filesystem" for U_SPIFFS
+    if (ArduinoOTA.getCommand() == U_FLASH) {
+      type = "sketch";
+    } else {
+      type = "filesystem";
+    }
+    // NOTE: if updating SPIFFS this would be the place to unmount SPIFFS using SPIFFS.end()
+    Serial.println("Start updating " + type);
+  });
+  ArduinoOTA.onEnd([]() {
+    Serial.println("\nEnd");
+  });
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+    Serial.printf("Progress: %u%%\r", (progress * 100) / total);
+  });
+  ArduinoOTA.onError([](ota_error_t error) {
+    Serial.printf("Error[%u]: ", error);
+    if (error == OTA_AUTH_ERROR) {
+      Serial.println("Auth Failed");
+    } else if (error == OTA_BEGIN_ERROR) {
+      Serial.println("Begin Failed");
+    } else if (error == OTA_CONNECT_ERROR) {
+      Serial.println("Connect Failed");
+    } else if (error == OTA_RECEIVE_ERROR) {
+      Serial.println("Receive Failed");
+    } else if (error == OTA_END_ERROR) {
+      Serial.println("End Failed");
+    }
+  });
+
+  ArduinoOTA.begin();
   
   Serial.println("ArduinoOTA Ready");
   Serial.println("Hostname: victron-esp32-ess");
@@ -172,22 +282,21 @@ void setupOTA() {
 
   // Web-based OTA update (additional method)
   webServer.on("/update", HTTP_GET, [](AsyncWebServerRequest *request){
-    String html = "<html><body>";
-    html += "<h1>Victron ESS ESP32 - OTA Update</h1>";
-    html += "<h2>Web Upload</h2>";
-    html += "<form method='POST' action='/update' enctype='multipart/form-data'>";
-    html += "<input type='file' name='update' accept='.bin'>";
-    html += "<input type='submit' value='Update'>";
-    html += "</form>";
-    html += "<h2>PlatformIO OTA</h2>";
-    html += "<p>Hostname: victron-esp32-ess</p>";
-    html += "<p>Port: 3232</p>";
-    html += "<p>Password: victron123</p>";
-    html += "<p>Command: <code>pio run -t upload --upload-port " + WiFi.localIP().toString() + "</code></p>";
-    html += "<p>Aktuelle Version: 1.0.0</p>";
-    html += "<p>IP: " + WiFi.localIP().toString() + "</p>";
-    html += "</body></html>";
-    request->send(200, "text/html", html);
+    // Use static strings to save DRAM
+    static const char html_start[] PROGMEM = "<html><body><h1>Victron ESS ESP32 - OTA Update</h1><h2>Web Upload</h2><form method='POST' action='/update' enctype='multipart/form-data'><input type='file' name='update' accept='.bin'><input type='submit' value='Update'></form><h2>PlatformIO OTA</h2><p>Hostname: victron-esp32-ess</p><p>Port: 3232</p><p>Password: victron123</p><p>Command: <code>pio run -t upload --upload-port ";
+    static const char html_end[] PROGMEM = "</code></p><p>Aktuelle Version: 1.0.0</p><p>IP: ";
+    static const char html_close[] PROGMEM = "</p></body></html>";
+    
+    // Build response with minimal string operations
+    String response;
+    response.reserve(512); // Pre-allocate to reduce fragmentation
+    response += FPSTR(html_start);
+    response += WiFi.localIP().toString();
+    response += FPSTR(html_end);
+    response += WiFi.localIP().toString();
+    response += FPSTR(html_close);
+    
+    request->send(200, "text/html", response);
   });
 
   webServer.on("/update", HTTP_POST, [](AsyncWebServerRequest *request){
@@ -230,20 +339,84 @@ void setupWebServer() {
   // Setup OTA update endpoint
   setupOTA();
   
-  // Add info endpoint
-  webServer.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
-    String html = "<html><body>";
-    html += "<h1>Victron ESS ESP32 Controller</h1>";
-    html += "<p><a href='/update'>OTA Update</a></p>";
-    html += "<p><a href='/api/status'>API Status</a></p>";
-    html += "<p>WiFi: " + String(WiFi.isConnected() ? "Connected" : "Disconnected") + "</p>";
-    html += "<p>IP: " + WiFi.localIP().toString() + "</p>";
-    html += "<p>Batteriezustand: " + String(systemData.battery.soc) + "%</p>";
-    html += "<p>Batterieleistung: " + String(systemData.battery.power) + "W</p>";
-    html += "<p>CAN Status: " + String(pylontechCAN.isBatteryOnline() ? "Online" : "Offline") + "</p>";
-    html += "</body></html>";
-    request->send(200, "text/html", html);
+  // Initialize SPIFFS for serving files
+  if (!SPIFFS.begin(true)) {
+    Serial.println("Failed to mount SPIFFS");
+  } else {
+    Serial.println("SPIFFS mounted successfully");
+  }
+  
+  // Serve static files from SPIFFS
+  webServer.serveStatic("/", SPIFFS, "/").setDefaultFile("index.html");
+  
+  // Feed-in power control endpoint
+  webServer.on("/api/feedin", HTTP_POST, [](AsyncWebServerRequest *request){
+    if (request->hasParam("enabled", true)) {
+      feedInControlEnabled = request->getParam("enabled", true)->value() == "true";
+    }
+    if (request->hasParam("target", true)) {
+      targetFeedInPower = request->getParam("target", true)->value().toFloat();
+      // Clamp to reasonable limits
+      if (targetFeedInPower < 0) targetFeedInPower = 0;
+      if (targetFeedInPower > maxFeedInPower) targetFeedInPower = maxFeedInPower;
+    }
+    if (request->hasParam("max", true)) {
+      maxFeedInPower = request->getParam("max", true)->value().toFloat();
+      // Ensure reasonable limits
+      if (maxFeedInPower < 100) maxFeedInPower = 100;
+      if (maxFeedInPower > 10000) maxFeedInPower = 10000;
+    }
+    
+    // Send response with current settings
+    JsonDocument response;
+    response["enabled"] = feedInControlEnabled;
+    response["target"] = targetFeedInPower;
+    response["max"] = maxFeedInPower;
+    response["current"] = systemData.multiplus.esspower;
+    
+    String output;
+    serializeJson(response, output);
+    request->send(200, "application/json", output);
+    
+    Serial.printf("Feed-in control updated: enabled=%s, target=%.1fW, max=%.1fW\n", 
+                  feedInControlEnabled ? "true" : "false", targetFeedInPower, maxFeedInPower);
   });
+  
+  // Fallback endpoint if SPIFFS file not found
+  webServer.onNotFound([](AsyncWebServerRequest *request){
+    if (request->url() == "/") {
+      // Use static strings to save DRAM as fallback
+      static const char html_start[] PROGMEM = "<html><body><h1>Victron ESS ESP32 Controller</h1><p><a href='/update'>OTA Update</a></p><p><a href='/api/status'>API Status</a></p><p>WiFi: ";
+      static const char html_ip[] PROGMEM = "</p><p>IP: ";
+      static const char html_battery[] PROGMEM = "</p><p>Batteriezustand: ";
+      static const char html_power[] PROGMEM = "%</p><p>Batterieleistung: ";
+      static const char html_can[] PROGMEM = "W</p><p>CAN Status: ";
+      static const char html_end[] PROGMEM = "</p><p><em>Note: SPIFFS not available, using fallback HTML</em></p></body></html>";
+      
+      // Build response with minimal string operations
+      String response;
+      response.reserve(512); // Pre-allocate to reduce fragmentation
+      response += FPSTR(html_start);
+      response += WiFi.isConnected() ? "Connected" : "Disconnected";
+      response += FPSTR(html_ip);
+      response += WiFi.localIP().toString();
+      response += FPSTR(html_battery);
+      response += systemData.battery.soc;
+      response += FPSTR(html_power);
+      response += systemData.battery.power;
+      response += FPSTR(html_can);
+      response += pylontechCAN.isBatteryOnline() ? "Online" : "Offline";
+      response += FPSTR(html_end);
+      
+      request->send(200, "text/html", response);
+    } else {
+      request->send(404, "text/plain", "File not found");
+    }
+  });
+  
+  // Setup WebSocket
+  ws.onEvent(onWsEvent);
+  webServer.addHandler(&ws);
   
   // Start the web server
   webServer.begin();
@@ -265,7 +438,7 @@ void setup() {
   systemData.battery.voltage = 48.0;
   systemData.battery.current = 0.0;
   systemData.battery.power = 0;
-  systemData.battery.soc = 50;
+  systemData.battery.soc = 0;
   systemData.battery.temperature = 25.0;
   
   systemData.multiplus.dcVoltage = 48.0;
@@ -278,8 +451,8 @@ void setup() {
   statusLED.begin();
   statusLED.setBootMode();
   
-  // Setup WiFi with WiFiManager
-  setupWiFiManager();
+  // Setup WiFi connection
+  setupWiFiConnection();
   
   // Setup OTA updates
   setupOTA();
@@ -321,35 +494,53 @@ void setup() {
 }
 
 void loop() {
-  unsigned long currentTime = millis();
+  // Handle WiFi provisioning
+  wifiProvisioning.loop();
   
-  // Handle timer events
-  if (timerFlag) {
-    timerFlag = false;
-    processTimerEvents();
-  }
-  
-  // Update status LED
-  if (currentTime - lastLedUpdate >= LED_UPDATE_INTERVAL) {
-    lastLedUpdate = currentTime;
-    statusLED.update();
-    updateStatusLED();
-  }
-  
-  // Update system status
-  if (currentTime - lastStatusUpdate >= STATUS_UPDATE_INTERVAL) {
-    lastStatusUpdate = currentTime;
+  // Only run main application if WiFi is connected
+  if (wifiProvisioning.isConnected()) {
+    ArduinoOTA.handle();
     
-    // Log current status
-    Serial.printf("Battery: %.1fV, %.1fA, %dW, SOC:%d%% | ", 
-                  systemData.battery.voltage, 
-                  systemData.battery.current,
-                  systemData.battery.power,
-                  systemData.battery.soc);
-    Serial.printf("CAN: %s, VE.Bus: %s | ",
-                  pylontechCAN.isBatteryOnline() ? "Online" : "Offline",
-                  veBusHandler.isTaskRunning() ? "Running" : "Stopped");
-    Serial.printf("WiFi: %s\n", WiFi.isConnected() ? "Connected" : "Disconnected");
+    unsigned long currentTime = millis();
+    
+    // Handle timer events
+    if (timerFlag) {
+      timerFlag = false;
+      processTimerEvents();
+    }
+    
+    // Update status LED
+    if (currentTime - lastLedUpdate >= LED_UPDATE_INTERVAL) {
+      lastLedUpdate = currentTime;
+      statusLED.update();
+      updateStatusLED();
+    }
+    
+    // Update system status
+    if (currentTime - lastStatusUpdate >= STATUS_UPDATE_INTERVAL) {
+      lastStatusUpdate = currentTime;
+      
+      // Send WebSocket update to all connected clients
+      String wsData = createFullStatusJson();
+      ws.textAll(wsData);
+      
+      // Log current status
+      Serial.printf("Battery: %.1fV, %.1fA, %dW, SOC:%d%% | ", 
+                    systemData.battery.voltage, 
+                    systemData.battery.current,
+                    systemData.battery.power,
+                    systemData.battery.soc);
+      Serial.printf("CAN: %s, VE.Bus: %s | ",
+                    pylontechCAN.isBatteryOnline() ? "Online" : "Offline",
+                    veBusHandler.isTaskRunning() ? "Running" : "Stopped");
+      Serial.printf("WiFi: %s\r\n", WiFi.isConnected() ? "Connected" : "Disconnected");
+    }
+    
+    // Clean up WebSocket connections
+    ws.cleanupClients();
+  } else {
+    // WiFi setup mode - just blink LED
+    statusLED.update();
   }
   
   // Small delay to prevent watchdog issues
