@@ -54,6 +54,12 @@ void MQTTMinimal::publish(const char* topic, const char* value) {
     }
 }
 
+void MQTTMinimal::publishDebug(const char* message) {
+    if (isConnected()) {
+        client.publish("esp32victron/debug/vebus", message);
+    }
+}
+
 void MQTTMinimal::setCallback(std::function<void(const char* topic, const char* payload)> callback) {
     messageCallback = callback;
 }

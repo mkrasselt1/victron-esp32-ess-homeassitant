@@ -8,6 +8,9 @@
 #include "vebus_handler.h"
 #include "system_data.h"
 
+// External debug function declaration
+extern void publishDebugMessage(const String& message, const String& level);
+
 // Global instance
 // VeBusHandler veBusHandler; // Removed - defined in main.cpp
 
@@ -18,7 +21,7 @@ VeBusHandler::VeBusHandler() {
     mutex = nullptr;
     lastCommandId = 0;
     isRunning = false;
-    debugMode = false;
+    debugMode = true;  // Enable debug mode by default
     rxBufferPos = 0;
     lastRxTime = 0;
     waitingForResponse = false;
@@ -30,19 +33,41 @@ VeBusHandler::~VeBusHandler() {
 }
 
 bool VeBusHandler::begin(int rxPin, int txPin, long baudRate) {
+    Serial.println("VeBus: Starting initialization...");
+    
+    // Enable debug mode for troubleshooting
+    debugMode = true;
+    
+    if (debugMode) publishDebugMessage("VeBus: Starting initialization...", "info");
+    
     // Initialize hardware serial for RS485
     serial = &Serial2;
     serial->begin(baudRate, SERIAL_8N1, rxPin, txPin);
+    Serial.printf("VeBus: Serial initialized on pins RX:%d TX:%d\n", rxPin, txPin);
+    if (debugMode) {
+        char msg[64];
+        snprintf(msg, sizeof(msg), "VeBus: Serial initialized on pins RX:%d TX:%d", rxPin, txPin);
+        publishDebugMessage(msg, "info");
+    }
     
     // Configure RS485 half-duplex mode - try to enable it
     pinMode(VEBUS_DE_PIN, OUTPUT);  // Driver Enable
     pinMode(VEBUS_SE_PIN, OUTPUT);  // Send Enable
     digitalWrite(VEBUS_DE_PIN, LOW);  // Start in receive mode
     digitalWrite(VEBUS_SE_PIN, LOW);  // Start in receive mode
+    Serial.printf("VeBus: RS485 pins configured - DE:%d SE:%d\n", VEBUS_DE_PIN, VEBUS_SE_PIN);
+    if (debugMode) {
+        char msg[64];
+        snprintf(msg, sizeof(msg), "VeBus: RS485 pins configured - DE:%d SE:%d", VEBUS_DE_PIN, VEBUS_SE_PIN);
+        publishDebugMessage(msg, "info");
+    }
     
     // Try to set RS485 mode if available
     #ifdef UART_MODE_RS485_HALF_DUPLEX
     serial->setMode(UART_MODE_RS485_HALF_DUPLEX);
+    Serial.println("VeBus: UART_MODE_RS485_HALF_DUPLEX enabled");
+    #else
+    Serial.println("VeBus: UART_MODE_RS485_HALF_DUPLEX not available");
     #endif
     
     // Create mutex for thread-safe access
@@ -123,7 +148,28 @@ void VeBusHandler::communicationTask() {
     VeBusCommandItem commandItem;
     TickType_t lastWakeTime = xTaskGetTickCount();
     
+    // Send initial debug message
+    Serial.println("VeBus: TASK STARTED - communicationTask is running!");
+    Serial.println("VeBus: About to send WebSocket debug message");
+    if (debugMode) {
+        publishDebugMessage("VeBus: TASK STARTED - communicationTask is running!", "info");
+        Serial.println("VeBus: WebSocket debug message sent");
+    }
+    
     while (isRunning) {
+        // Debug: Show that task loop is running
+        static uint32_t loopCounter = 0;
+        if (++loopCounter % 100 == 0) {  // Every 100 iterations (1 second at 100Hz)
+            Serial.printf("VeBus: Task loop running (iteration %u)\n", loopCounter);
+        }
+        
+        // Send heartbeat debug message every 10 seconds
+        static uint32_t lastHeartbeat = 0;
+        if (millis() - lastHeartbeat > 10000 && debugMode) {
+            char msg[64];
+            snprintf(msg, sizeof(msg), "VeBus: communicationTask heartbeat (framesSent: %u)", stats.framesSent);
+            publishDebugMessage(msg, "info");
+        }
         // Process incoming frames
         if (receiveFrame(receivedFrame)) {
             processReceivedFrame(receivedFrame);
@@ -160,7 +206,21 @@ void VeBusHandler::communicationTask() {
         // Send periodic status request to generate some frame traffic
         static uint32_t lastStatusRequest = 0;
         static uint8_t frameNumber = 0;
-        if (millis() - lastStatusRequest > 5000) { // Every 5 seconds
+        
+        // Debug: Check timing condition
+        uint32_t currentMillis = millis();
+        uint32_t timeDiff = currentMillis - lastStatusRequest;
+        if (timeDiff % 1000 == 0 && timeDiff > 0) {  // Log every second
+            Serial.printf("VeBus: Time check - current: %lu, last: %lu, diff: %lu\n", 
+                         currentMillis, lastStatusRequest, timeDiff);
+        }
+        
+        if (millis() - lastStatusRequest > 2000) { // Every 2 seconds (faster for testing)
+            Serial.println("VeBus: PERIODIC REQUEST - About to send status frame");
+            Serial.printf("VeBus: Current millis: %lu, lastStatusRequest: %lu\n", millis(), lastStatusRequest);
+            if (debugMode) {
+                publishDebugMessage("VeBus: PERIODIC REQUEST - About to send status frame", "info");
+            }
             VeBusFrame statusFrame;
             statusFrame.isMk3Frame = true;
             statusFrame.frameNumber = frameNumber++;
@@ -175,16 +235,32 @@ void VeBusHandler::communicationTask() {
             statusFrame.calculateChecksum();
             
             // Send directly instead of queuing to ensure it gets sent
+            Serial.println("VeBus: CALLING sendFrame function");
+            Serial.printf("VeBus: Frame data - command: 0x%02X, length: %d\n", statusFrame.command, statusFrame.length);
             if (sendFrame(statusFrame)) {
                 stats.framesSent++;  // Increment counter immediately
                 lastStatusRequest = millis();
+                Serial.printf("VeBus: ✓ Sent periodic MK3 status request #%d (framesSent: %u)\n", 
+                             frameNumber - 1, stats.framesSent);
                 if (debugMode) {
-                    Serial.printf("VeBus: Sent periodic MK3 status request (frame #%d)\n", frameNumber - 1);
+                    char msg[128];
+                    snprintf(msg, sizeof(msg), "VeBus: ✓ Sent periodic MK3 status request #%d (framesSent: %u)", 
+                             frameNumber - 1, stats.framesSent);
+                    publishDebugMessage(msg, "success");
                 }
             } else {
+                Serial.println("VeBus: ✗ Failed to send periodic status request");
                 if (debugMode) {
-                    Serial.println("VeBus: Failed to send periodic status request");
+                    char msg[128];
+                    snprintf(msg, sizeof(msg), "VeBus: ✗ Failed to send periodic status request #%d", frameNumber - 1);
+                    publishDebugMessage(msg, "error");
                 }
+            }
+        } else {
+            // Debug: Show when condition is not met
+            if (millis() % 5000 == 0) {  // Log every 5 seconds
+                Serial.printf("VeBus: Waiting for periodic request - current: %lu, last: %lu, remaining: %lu ms\n",
+                             millis(), lastStatusRequest, 2000 - (millis() - lastStatusRequest));
             }
         }
         
@@ -200,6 +276,9 @@ void VeBusHandler::communicationTask() {
         vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(10));
     }
     
+    // Task cleanup - this should never be reached in normal operation
+    Serial.println("VeBus: communicationTask ending");
+    if (debugMode) publishDebugMessage("VeBus: communicationTask ending", "warning");
     vTaskDelete(nullptr);
 }
 
@@ -341,6 +420,9 @@ bool VeBusHandler::parseMk3Frame(VeBusFrame& frame) {
 }
 
 bool VeBusHandler::sendFrame(const VeBusFrame& frame) {
+    Serial.println("VeBus: sendFrame called");
+    if (debugMode) publishDebugMessage("VeBus: sendFrame called", "debug");
+    
     if (serial == nullptr || !serial) {
         return false;
     }
@@ -380,6 +462,16 @@ bool VeBusHandler::sendFrame(const VeBusFrame& frame) {
 }
 
 bool VeBusHandler::sendFrameMk3Correct(const VeBusFrame& frame) {
+    Serial.println("VeBus: sendFrameMk3Correct called");
+    if (debugMode) publishDebugMessage("VeBus: sendFrameMk3Correct called", "debug");
+    
+    // Check if serial is available
+    if (!serial) {
+        Serial.println("VeBus: ERROR - Serial interface not initialized!");
+        if (debugMode) publishDebugMessage("VeBus: ERROR - Serial interface not initialized!", "error");
+        return false;
+    }
+    
     // Use the correct MK3 format from reference implementation
     uint8_t txBuffer[64];  // Buffer for command assembly
     int txLength = 0;
@@ -403,6 +495,13 @@ bool VeBusHandler::sendFrameMk3Correct(const VeBusFrame& frame) {
         txBuffer[txLength++] = frame.data[i];
     }
     
+    Serial.printf("VeBus: Built frame with %d bytes before stuffing\n", txLength);
+    if (debugMode) {
+        char msg[64];
+        snprintf(msg, sizeof(msg), "VeBus: Built frame with %d bytes before stuffing", txLength);
+        publishDebugMessage(msg, "debug");
+    }
+    
     // Apply byte stuffing to the entire frame after header
     uint8_t stuffedBuffer[128];
     int stuffedLength = commandReplaceFAtoFF(stuffedBuffer, &txBuffer[4], txLength - 4);
@@ -424,26 +523,53 @@ bool VeBusHandler::sendFrameMk3Correct(const VeBusFrame& frame) {
     // Calculate and append checksum
     finalLength = appendChecksum(finalBuffer, finalLength);
     
+    Serial.printf("VeBus: Final frame length: %d bytes\n", finalLength);
+    if (debugMode) {
+        char msg[64];
+        snprintf(msg, sizeof(msg), "VeBus: Final frame length: %d bytes", finalLength);
+        publishDebugMessage(msg, "debug");
+    }
+    
     // RS485: Switch to transmit mode
     digitalWrite(VEBUS_DE_PIN, HIGH);
     digitalWrite(VEBUS_SE_PIN, HIGH);
     delayMicroseconds(50);  // Small delay for transceiver switching
+    if (debugMode) publishDebugMessage("VeBus: RS485 switched to TX mode", "debug");
+    
+    Serial.printf("VeBus: RS485 pins set - DE:%d SE:%d\n", digitalRead(VEBUS_DE_PIN), digitalRead(VEBUS_SE_PIN));
+    if (debugMode) {
+        char msg[64];
+        snprintf(msg, sizeof(msg), "VeBus: RS485 pins state - DE:%d SE:%d", digitalRead(VEBUS_DE_PIN), digitalRead(VEBUS_SE_PIN));
+        publishDebugMessage(msg, "debug");
+    }
     
     // Send the frame
-    serial->write(finalBuffer, finalLength);
+    size_t bytesSent = serial->write(finalBuffer, finalLength);
     serial->flush();
     
     // RS485: Switch back to receive mode
     delayMicroseconds(50);  // Allow last byte to be sent
     digitalWrite(VEBUS_DE_PIN, LOW);
     digitalWrite(VEBUS_SE_PIN, LOW);
+    if (debugMode) publishDebugMessage("VeBus: RS485 switched to RX mode", "debug");
     
+    Serial.printf("VeBus: Sent %d bytes via serial\n", bytesSent);
     if (debugMode) {
-        Serial.printf("VeBus: Sent MK3 frame type 0x%02X, original length %d, final length %d\n", 
-                     frame.command, frame.length, finalLength);
+        char msg[128];
+        snprintf(msg, sizeof(msg), "VeBus: Sent %d bytes via serial (MK3 frame type 0x%02X)", 
+                 bytesSent, frame.command);
+        publishDebugMessage(msg, "success");
     }
     
-    return true;
+    bool success = (bytesSent == finalLength);
+    Serial.printf("VeBus: sendFrame result: %s (%d/%d bytes)\n", success ? "SUCCESS" : "FAILED", bytesSent, finalLength);
+    if (debugMode) {
+        char msg[64];
+        snprintf(msg, sizeof(msg), "VeBus: Frame send result: %s (%d/%d)", success ? "SUCCESS" : "FAILED", bytesSent, finalLength);
+        publishDebugMessage(msg, success ? "success" : "error");
+    }
+    
+    return success;
 }
 
 int VeBusHandler::commandReplaceFAtoFF(uint8_t *outbuf, const uint8_t *inbuf, int inlength) {

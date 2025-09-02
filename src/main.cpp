@@ -124,6 +124,7 @@ void setupWebServer();
 void setupOTA();
 void setupWiFiManager();
 void onTimer();
+void publishDebugMessage(const String& message, const String& level);
 
 // Memory-efficient JSON creation for WebSocket updates
 void sendFullStatusToClient(AsyncWebSocketClient *client) {
@@ -210,9 +211,16 @@ void sendFullStatusToClient(AsyncWebSocketClient *client) {
 void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len) {
   if (type == WS_EVT_CONNECT) {
     Serial.printf("WebSocket client #%u connected from %s\n", client->id(), client->remoteIP().toString().c_str());
+    // Send debug message when client connects
+    char connectMsg[64];
+    snprintf(connectMsg, sizeof(connectMsg), "WebSocket client #%u connected", client->id());
+    publishDebugMessage(connectMsg, "success");
     sendFullStatusToClient(client);
   } else if (type == WS_EVT_DISCONNECT) {
     Serial.printf("WebSocket client #%u disconnected\n", client->id());
+    char disconnectMsg[64];
+    snprintf(disconnectMsg, sizeof(disconnectMsg), "WebSocket client #%u disconnected", client->id());
+    publishDebugMessage(disconnectMsg, "warning");
   }
 }
 
@@ -591,6 +599,12 @@ void setup() {
   Serial.println("VE.Bus Task: " + String(veBusHandler.isTaskRunning() ? "Running" : "Stopped"));
   Serial.println("CAN Task: " + String(pylontechCAN.isTaskRunning() ? "Running" : "Stopped"));
   Serial.println("==============================================");
+  
+  // Send test debug message to verify WebSocket connection
+  publishDebugMessage("System startup complete - Debug console active", "success");
+  
+  // Send another test message immediately
+  publishDebugMessage("WebSocket connection test - this should appear in debug console", "info");
 }
 
 void loop() {
@@ -622,6 +636,27 @@ void loop() {
     // Update system status
     if (currentTime - lastStatusUpdate >= STATUS_UPDATE_INTERVAL) {
       lastStatusUpdate = currentTime;
+      
+      // Send test debug message every 5 seconds to verify WebSocket connection
+      static unsigned long lastDebugTest = 0;
+      if (currentTime - lastDebugTest >= 2000) {  // Every 2 seconds
+        lastDebugTest = currentTime;
+        char testMsg[64];
+        snprintf(testMsg, sizeof(testMsg), "WebSocket test - VE.Bus Task: %s", 
+                 veBusHandler.isTaskRunning() ? "Running" : "Stopped");
+        publishDebugMessage(testMsg, "info");
+      }
+      
+      // Send VE.Bus debug info via MQTT
+      if (mqttClient.isConnected()) {
+        auto veBusStats = veBusHandler.getStatistics();
+        char debugMsg[256];
+        snprintf(debugMsg, sizeof(debugMsg), 
+                 "VE.Bus Status: framesSent=%u, framesReceived=%u, isRunning=%d, taskRunning=%d", 
+                 veBusStats.framesSent, veBusStats.framesReceived, 
+                 veBusHandler.isTaskRunning(), veBusHandler.isTaskRunning());
+        mqttClient.publishDebug(debugMsg);
+      }
       
       // Send WebSocket update to all connected clients - comprehensive data
       if (ws.count() > 0) {
@@ -742,4 +777,22 @@ void loop() {
   
   // Small delay to prevent watchdog issues
   delay(1);
+}
+
+// Global debug function for MQTT and WebSocket publishing
+void publishDebugMessage(const String& message, const String& level) {
+  // Send to MQTT if connected
+  if (mqttClient.isConnected()) {
+    mqttClient.publishDebug(message.c_str());
+  }
+
+  // Send to WebSocket for real-time web interface debugging
+  JsonDocument doc;
+  doc["debug"]["level"] = level;
+  doc["debug"]["message"] = message;
+  doc["debug"]["timestamp"] = millis();
+
+  String wsJson;
+  serializeJson(doc, wsJson);
+  ws.textAll(wsJson);
 }

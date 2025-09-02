@@ -30,12 +30,29 @@ function updateElementClass(id, className) {
     }
 }
 
+function hasDebugData(data) {
+    return data.debug && typeof data.debug.level !== 'undefined' && typeof data.debug.message !== 'undefined';
+}
+
+function updateDebugData(data) {
+    if (hasDebugData(data)) {
+        addDebugMessage(data.debug.level, data.debug.message, data.debug.timestamp);
+    }
+}
+
 function connectWS() {
     ws = new WebSocket('ws://' + location.hostname + '/ws');
     ws.onmessage = function(event) {
         try {
             const data = JSON.parse(event.data);
-            updateData(data); // Neue spezifische Update-Funktion
+
+            // Handle debug messages
+            if (hasDebugData(data)) {
+                updateDebugData(data);
+            }
+
+            // Handle regular data updates
+            updateData(data);
             lastUpdateTime = Date.now();
         } catch (e) {
             console.error('Error parsing WebSocket data:', e);
@@ -254,6 +271,11 @@ function updateData(data) {
     if (hasControlData(data)) {
         updateControlData(data);
     }
+
+    // Debug data section
+    if (hasDebugData(data)) {
+        updateDebugData(data);
+    }
 }
 
 // Helper functions to check if specific data sections are available
@@ -467,6 +489,116 @@ function updateControlData(data) {
     updateElement('avg_charging_power', (data.averageChargingPower || '?'), ' W');
     updateElement('power_trend_cons', (data.powerTrendConsumption || '?'), ' Wh');
     updateElement('power_trend_feed', (data.powerTrendFeedIn || '?'), ' Wh');
+}
+
+function addDebugMessage(level, message, timestamp = null) {
+    const debugMessages = getElement('debug-messages');
+    if (!debugMessages) return;
+
+    const messageDiv = document.createElement('div');
+    messageDiv.className = `debug-message ${level}`;
+
+    const timestampStr = timestamp ? new Date(timestamp).toLocaleTimeString() : new Date().toLocaleTimeString();
+
+    messageDiv.innerHTML = `
+        <span class="debug-timestamp">${timestampStr}</span>
+        <span class="debug-level ${level}">${level.toUpperCase()}</span>
+        <span class="debug-content">${message}</span>
+    `;
+
+    debugMessages.appendChild(messageDiv);
+
+    // Auto-scroll to bottom
+    debugMessages.scrollTop = debugMessages.scrollHeight;
+
+    // Limit number of messages to prevent memory issues
+    while (debugMessages.children.length > 100) {
+        debugMessages.removeChild(debugMessages.firstChild);
+    }
+}
+
+function clearDebugConsole() {
+    const debugMessages = getElement('debug-messages');
+    if (debugMessages) {
+        debugMessages.innerHTML = '';
+    }
+}
+
+// Extend WebSocket message handler to process debug messages
+function connectWS() {
+    ws = new WebSocket('ws://' + location.hostname + '/ws');
+    ws.onmessage = function(event) {
+        try {
+            const data = JSON.parse(event.data);
+
+            // Handle debug messages
+            if (hasDebugData(data)) {
+                updateDebugData(data);
+            }
+
+            // Handle regular data updates
+            updateData(data);
+            lastUpdateTime = Date.now();
+        } catch (e) {
+            console.error('Error parsing WebSocket data:', e);
+        }
+    };
+    ws.onclose = function() {
+        setTimeout(connectWS, 2000);
+    };
+    ws.onerror = function() {
+        console.log('WebSocket error');
+    };
+}
+
+// Update the main updateData function to include debug processing
+function updateData(data) {
+    if (!data) return;
+
+    // Process debug data first
+    if (hasDebugData(data)) {
+        updateDebugData(data);
+    }
+
+    // Battery data section
+    if (hasBatteryData(data)) {
+        updateBatteryData(data);
+    }
+
+    // MultiPlus data section
+    if (hasMultiPlusData(data)) {
+        updateMultiPlusData(data);
+    }
+
+    // ESS data section
+    if (hasESSData(data)) {
+        updateESSData(data);
+    }
+
+    // VE.Bus data section
+    if (hasVEbusData(data)) {
+        updateVEbusData(data);
+    }
+
+    // System data section
+    if (hasSystemData(data)) {
+        updateSystemData(data);
+    }
+
+    // MQTT data section
+    if (hasMQTTData(data)) {
+        updateMQTTData(data);
+    }
+
+    // Protection/Warnings data section
+    if (hasProtectionData(data)) {
+        updateProtectionData(data);
+    }
+
+    // Control/Diagnostics data section
+    if (hasControlData(data)) {
+        updateControlData(data);
+    }
 }
 
 function formatTimeFromSeconds(totalSeconds) {

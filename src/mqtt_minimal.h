@@ -11,6 +11,7 @@ public:
     void loop();
     bool isConnected();
     void publish(const char* topic, const char* value);
+    void publishDebug(const char* message);
     void setCallback(std::function<void(const char* topic, const char* payload)> callback);
     void onMessage(char* topic, byte* payload, unsigned int length);
     

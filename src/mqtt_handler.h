@@ -34,6 +34,7 @@ public:
     // Publishing (simplified)
     void publishSystemData(const SystemData& data);
     void publishFeedInControl(bool enabled, float target, float max, float current);
+    void publishDebug(const String& message);
     
     // Feed-in control callbacks
     void setFeedInControlCallback(std::function<void(bool enabled, float target, float max)> callback);

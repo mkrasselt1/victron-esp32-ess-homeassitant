@@ -387,3 +387,126 @@ body {
         font-size: 2rem;
     }
 }
+
+/* Debug Console Styles */
+.debug-console {
+    background: #1e1e1e;
+    color: #d4d4d4;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    font-size: 0.85rem;
+    line-height: 1.4;
+    border-radius: 8px;
+    padding: 1rem;
+    margin-top: 1rem;
+    max-height: 400px;
+    overflow-y: auto;
+    border: 1px solid #333;
+    position: relative;
+}
+
+.debug-console-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid #333;
+}
+
+.debug-console-title {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--victron-blue);
+}
+
+.debug-clear-btn {
+    background: var(--victron-red);
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 0.3rem 0.6rem;
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: background 0.3s;
+}
+
+.debug-clear-btn:hover {
+    background: #c82333;
+}
+
+.debug-messages {
+    max-height: 300px;
+    overflow-y: auto;
+    padding-right: 0.5rem;
+}
+
+.debug-message {
+    margin: 0.2rem 0;
+    padding: 0.2rem 0;
+    border-left: 3px solid transparent;
+    padding-left: 0.5rem;
+}
+
+.debug-message.info {
+    border-left-color: var(--victron-blue);
+}
+
+.debug-message.success {
+    border-left-color: var(--victron-green);
+}
+
+.debug-message.warning {
+    border-left-color: var(--victron-orange);
+}
+
+.debug-message.error {
+    border-left-color: var(--victron-red);
+}
+
+.debug-message.debug {
+    border-left-color: #6c757d;
+}
+
+.debug-timestamp {
+    color: #888;
+    font-size: 0.75rem;
+    margin-right: 0.5rem;
+}
+
+.debug-level {
+    font-weight: bold;
+    text-transform: uppercase;
+    font-size: 0.7rem;
+    margin-right: 0.5rem;
+    padding: 0.1rem 0.3rem;
+    border-radius: 2px;
+}
+
+.debug-level.info { background: var(--victron-blue); color: white; }
+.debug-level.success { background: var(--victron-green); color: white; }
+.debug-level.warning { background: var(--victron-orange); color: white; }
+.debug-level.error { background: var(--victron-red); color: white; }
+.debug-level.debug { background: #6c757d; color: white; }
+
+.debug-content {
+    word-wrap: break-word;
+}
+
+/* Scrollbar styling for debug console */
+.debug-messages::-webkit-scrollbar {
+    width: 6px;
+}
+
+.debug-messages::-webkit-scrollbar-track {
+    background: #2d2d2d;
+    border-radius: 3px;
+}
+
+.debug-messages::-webkit-scrollbar-thumb {
+    background: #555;
+    border-radius: 3px;
+}
+
+.debug-messages::-webkit-scrollbar-thumb:hover {
+    background: #777;
+}

@@ -10,8 +10,8 @@ MQTTHandler* MQTTHandler::instance = nullptr;
 MQTTHandler::MQTTHandler() : 
     mqttClient(wifiClient),
     mqttPort(1883),
-    deviceId("victron-esp32-ess"),
-    baseTopic("victron-esp32"),
+    deviceId("esp32-victron-ess"),
+    baseTopic("esp32victron"),
     lastReconnectAttempt(0),
     lastPublish(0) {
     
@@ -195,4 +195,11 @@ void MQTTHandler::publishValue(const String& topic, const String& value) {
     
     String fullTopic = baseTopic + "/" + topic;
     mqttClient.publish(fullTopic.c_str(), value.c_str());
+}
+
+void MQTTHandler::publishDebug(const String& message) {
+    if (!mqttClient.connected()) return;
+    
+    String debugTopic = baseTopic + "/debug/vebus";
+    mqttClient.publish(debugTopic.c_str(), message.c_str());
 }
